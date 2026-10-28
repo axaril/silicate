@@ -223,7 +223,7 @@ impl App {
             .unwrap();
         rx.await.unwrap().expect("Buffer mapping failed");
 
-        let data = buffer_slice.get_mapped_range().to_vec();
+        let data = buffer_slice.get_mapped_range().expect("Failed to get mapped range").to_vec();
         output_buffer.unmap();
 
         log::debug!("Loading data to CPU");

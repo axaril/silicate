@@ -50,7 +50,7 @@ impl ViewMemory {
 impl<'a> CanvasView<'a> {
     /// Give a unique id for each plot within the same [`Ui`].
     pub fn new(
-        id_source: impl std::hash::Hash,
+        id_source: impl egui::AsId,
         image: Option<Image<'static>>,
         image_rotation: &'a mut f32,
     ) -> Self {

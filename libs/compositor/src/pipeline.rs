@@ -134,10 +134,10 @@ impl Pipeline {
                 device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("render_pipeline_layout"),
                     bind_group_layouts: &[
-                        &canvas_bind_group_layout,
-                        &sampler_bind_group_layout,
-                        &blending_bind_group_layout,
-                    ].map(Some),
+                        Some(&canvas_bind_group_layout),
+                        Some(&sampler_bind_group_layout),
+                        Some(&blending_bind_group_layout),
+                    ],
                     immediate_size: 0,
                 });
 
@@ -149,7 +149,7 @@ impl Pipeline {
                     module: &shader,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     entry_point: Some("vs_main"),
-                    buffers: &[VertexInput::desc(), ChunkInstance::desc()],
+                    buffers: &[Some(VertexInput::desc()), Some(ChunkInstance::desc())],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,

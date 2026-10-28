@@ -394,44 +394,36 @@ impl ViewerGui {
     pub fn layout_gui(&mut self, ui: &mut Ui) {
         CentralPanel::default()
             .frame(Frame::NONE.fill(ui.style().visuals.panel_fill))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.layout_view(ui);
 
                 ui.input(|i| {
                     i.raw.dropped_files.iter().for_each(|file| {
-                        if let Some(path) = &file.path {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.event_sender
-                                .send(AppEvent::LoadFile {
-                                    path: path.to_path_buf(),
-                                    node_path: None,
-                                })
-                                .ok();
-                            #[cfg(target_arch = "wasm32")]
-                            {
+                        cfg_select! {
+                            not(target_arch = "wasm32") => {
                                 self.event_sender
-                                    .send(AppEvent::Toast(egui_notify::Toast::error(
-                                        "File drag/drop is not supported on this platform.",
-                                    )))
+                                    .send(AppEvent::LoadFile {
+                                        path: file.path().to_path_buf(),
+                                        node_path: None,
+                                    })
                                     .ok();
-                                let _ = path;
                             }
-                        } else if let Some(bytes) = &file.bytes {
-                            #[cfg(target_arch = "wasm32")]
-                            self.event_sender
-                                .send(AppEvent::LoadFile {
-                                    bytes: bytes.clone(),
-                                    node_path: None,
-                                })
-                                .ok();
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                self.event_sender
-                                    .send(AppEvent::Toast(egui_notify::Toast::error(
-                                        "File drag/drop with in-memory data is not supported on this platform.",
-                                    )))
-                                    .ok();
-                                let _ = bytes;
+                            target_arch = "wasm32" => {
+                                // Browsers can only read dropped files asynchronously.
+                                let file = file.clone();
+                                let event_sender = self.event_sender.clone();
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    let event = match file.bytes_async().await {
+                                        Ok(bytes) => AppEvent::LoadFile {
+                                            bytes: Arc::from(bytes),
+                                            node_path: None,
+                                        },
+                                        Err(err) => AppEvent::Toast(egui_notify::Toast::error(
+                                            format!("Failed to read dropped file. Reason: {err}"),
+                                        )),
+                                    };
+                                    event_sender.send(event).ok();
+                                });
                             }
                         }
                     });
