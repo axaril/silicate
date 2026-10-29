@@ -10,7 +10,7 @@ wgpu = { workspace = true }
 silica = { path = "../silica" }
 
 # Procreate support
-zip = { version = "8.2", default-features = false, features = ["deflate"] }
+zip = { workspace = true, features = ["deflate"] }
 lzokay = { version = "2.0", default-features = false, features = [
     "decompress",
 ] }

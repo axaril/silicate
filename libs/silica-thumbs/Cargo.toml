@@ -1,5 +1,5 @@
 [package]
-name = "win_procreate_thumbs"
+name = "silica-thumbs"
 version = "1.9.0"
 edition = "2021"
 build = "build.rs"
@@ -22,9 +22,9 @@ windows = { workspace = true, features = [
     "Win32_Globalization",
 ] }
 
-windows-core = "0.62"
-windows-registry = "0.6"
+windows-core = "0.100"
+windows-registry = "0.100"
 
 # ZIP archive and image processing for .procreate files
-zip = "5.1"
+zip = { workspace = true, features = ["deflate"] }
 image = { workspace = true, features = ["png"] }

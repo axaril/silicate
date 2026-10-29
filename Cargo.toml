@@ -13,14 +13,15 @@ members = [
     "libs/compositor",
     "libs/silica",
     "libs/silica-gpu",
-    "libs/win-svg-thumbs-rust",
-    "libs/win-svg-thumbs-rust/test_render",
+    "libs/silica-thumbs",
+    "libs/silica-thumbs-test",
 ]
 
 [workspace.dependencies]
 wgpu = "30.0"
 image = { version = "0.25", default-features = false }
 windows = "0.62"
+zip = { version = "9.1.3", default-features = false }
 
 [features]
 default = []

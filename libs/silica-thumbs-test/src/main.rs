@@ -46,10 +46,10 @@ fn main() -> Result<()> {
     let height = 256;
 
     let cursor = std::io::Cursor::new(&file_data);
-    let data = win_procreate_thumbs::extract_procreate_thumbnail_bytes(cursor)?;
+    let data = silica_thumbs::extract_procreate_thumbnail_bytes(cursor)?;
 
     // Render file to HBITMAP
-    let hbitmap = win_procreate_thumbs::render_procreate_to_hbitmap(&data[..], width, height)?;
+    let hbitmap = silica_thumbs::render_procreate_to_hbitmap(&data[..], width, height)?;
     println!("Successfully rendered file to HBITMAP: {:?}", hbitmap);
 
     // Store the HBITMAP globally so the window procedure can access it

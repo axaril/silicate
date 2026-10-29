@@ -27,9 +27,9 @@ popd
 
 :: Run the build. Tried to to make it run as a non-admin, but couldn't get it to work.
 cd /d %~dp0..
-cargo build --profile release-dll -p win_procreate_thumbs --target=x86_64-pc-windows-msvc
-@REM cargo build --profile release-dll -p win_procreate_thumbs --target=i686-pc-windows-msvc
-@REM cargo build --profile release-dll -p win_procreate_thumbs --target=aarch64-pc-windows-msvc
+cargo build --profile release-dll -p silica-thumbs --target=x86_64-pc-windows-msvc
+@REM cargo build --profile release-dll -p silica-thumbs --target=i686-pc-windows-msvc
+@REM cargo build --profile release-dll -p silica-thumbs --target=aarch64-pc-windows-msvc
 
 :: Re-register the new DLL version. Only bother re-registering the 64 bit one.
 regsvr32 "%~dp0..\..\..\target\x86_64-pc-windows-msvc\release-dll\win_procreate_thumbs_x64.dll"
