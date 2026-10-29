@@ -1,0 +1,37 @@
+[workspace]
+members = ["test_render"]
+
+[package]
+name = "win_procreate_thumbs"
+version = "1.9.0"
+edition = "2021"
+build = "build.rs"
+
+[profile.release]
+# Include debug symbols
+debug = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Registry",
+    "Win32_Security",
+    "Win32_System_SystemInformation",
+    "Win32_Globalization",
+] }
+
+windows-core = "0.62"
+windows-registry = "0.6"
+
+# ZIP archive and image processing for .procreate files
+zip = "5.1"
+image = { version = "0.25", default-features = false, features = ["png"] }

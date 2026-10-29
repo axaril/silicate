@@ -1,0 +1,15 @@
+[package]
+name = "test_render"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test_render"
+
+[dependencies]
+win_procreate_thumbs = { path = ".." }
+
+windows = { version = "*", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI",
+] }

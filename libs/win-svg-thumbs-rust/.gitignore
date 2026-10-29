@@ -1,0 +1,21 @@
+#VSCODE
+.vscode/
+*.code-workspace
+
+# My Ignores
+*.bak
+Windows API Code Pack 1.1
+TestSvgFiles
+*_sample.bmp
+**/test.svg
+**/*.msi
+**/*.wixpdb
+**/_*
+Build-And-Test-Tools/MSI Installer/ResourceHacker.exe
+Build-And-Test-Tools/MSI Installer/ResourceHacker.ini
+
+# Rust Related
+/target
+/Testing/target
+*.lock
+Build-And-Test-Tools/MSI Installer/*.dll
