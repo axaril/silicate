@@ -9,10 +9,18 @@ repository = "https://github.com/Avarel/procreate-rs"
 license = "MIT"
 
 [workspace]
-members = ["libs/compositor", "libs/silica", "libs/silica-gpu"]
+members = [
+    "libs/compositor",
+    "libs/silica",
+    "libs/silica-gpu",
+    "libs/win-svg-thumbs-rust",
+    "libs/win-svg-thumbs-rust/test_render",
+]
 
 [workspace.dependencies]
 wgpu = "30.0"
+image = { version = "0.25", default-features = false }
+windows = "0.62"
 
 [features]
 default = []
@@ -23,7 +31,7 @@ log = "0.4"
 silicate-compositor = { path = "libs/compositor" }
 silica-gpu = { path = "libs/silica-gpu" }
 
-image = { version = "0.25", default-features = false, features = [
+image = { workspace = true, features = [
     "png",
     "jpeg",
     "tga",
@@ -74,6 +82,14 @@ strip = true
 lto = true
 panic = "abort"
 codegen-units = 1
+
+# The Explorer thumbnail DLL must unwind so its `catch_unwind` guards keep
+# panics from crossing the COM boundary into explorer.exe.
+[profile.release-dll]
+inherits = "release"
+panic = "unwind"
+strip = false
+debug = true
 
 [build-dependencies]
 winres = "0.1"

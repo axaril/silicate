@@ -9,7 +9,7 @@ name = "test_render"
 [dependencies]
 win_procreate_thumbs = { path = ".." }
 
-windows = { version = "*", features = [
+windows = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI",
 ] }

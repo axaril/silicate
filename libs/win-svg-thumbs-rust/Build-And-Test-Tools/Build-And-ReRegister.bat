@@ -11,13 +11,13 @@ if %errorLevel% neq 0 (
 )
 
 :: Unregister the previous DLL version
-regsvr32 /u "%~dp0..\target\x86_64-pc-windows-msvc\release\win_procreate_thumbs_x64.dll"
+regsvr32 /u "%~dp0..\..\..\target\x86_64-pc-windows-msvc\release-dll\win_procreate_thumbs_x64.dll"
 
 
 :: Get the absolute path to the DLL
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%\.."
-set "DLL_PATH=%CD%\target\x86_64-pc-windows-msvc\release\win_procreate_thumbs_x64.dll"
+set "DLL_PATH=%CD%\..\..\target\x86_64-pc-windows-msvc\release-dll\win_procreate_thumbs_x64.dll"
 popd
 ::echo  "%DLL_PATH%"
 
@@ -27,14 +27,14 @@ popd
 
 :: Run the build. Tried to to make it run as a non-admin, but couldn't get it to work.
 cd /d %~dp0..
-cargo build --release --target=x86_64-pc-windows-msvc
-@REM cargo build --release --target=i686-pc-windows-msvc
-@REM cargo build --release --target=aarch64-pc-windows-msvc
+cargo build --profile release-dll -p win_procreate_thumbs --target=x86_64-pc-windows-msvc
+@REM cargo build --profile release-dll -p win_procreate_thumbs --target=i686-pc-windows-msvc
+@REM cargo build --profile release-dll -p win_procreate_thumbs --target=aarch64-pc-windows-msvc
 
 :: Re-register the new DLL version. Only bother re-registering the 64 bit one.
-regsvr32 "%~dp0..\target\x86_64-pc-windows-msvc\release\win_procreate_thumbs_x64.dll"
+regsvr32 "%~dp0..\..\..\target\x86_64-pc-windows-msvc\release-dll\win_procreate_thumbs_x64.dll"
 
 :: Copy both DLLs to the MSI Installer folder
-copy /Y "%~dp0..\target\x86_64-pc-windows-msvc\release\win_procreate_thumbs_x64.dll" "%~dp0MSI Installer\win_procreate_thumbs_x64.dll"
-@REM copy /Y "%~dp0..\target\i686-pc-windows-msvc\release\win_procreate_thumbs_x86.dll" "%~dp0MSI Installer\win_procreate_thumbs_x86.dll"
-@REM copy /Y "%~dp0..\target\aarch64-pc-windows-msvc\release\win_procreate_thumbs_arm64.dll" "%~dp0MSI Installer\win_procreate_thumbs_arm64.dll"
+copy /Y "%~dp0..\..\..\target\x86_64-pc-windows-msvc\release-dll\win_procreate_thumbs_x64.dll" "%~dp0MSI Installer\win_procreate_thumbs_x64.dll"
+@REM copy /Y "%~dp0..\..\..\target\i686-pc-windows-msvc\release-dll\win_procreate_thumbs_x86.dll" "%~dp0MSI Installer\win_procreate_thumbs_x86.dll"
+@REM copy /Y "%~dp0..\..\..\target\aarch64-pc-windows-msvc\release-dll\win_procreate_thumbs_arm64.dll" "%~dp0MSI Installer\win_procreate_thumbs_arm64.dll"
