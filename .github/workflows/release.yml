@@ -5,6 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: write
+
 env:
   BIN_NAME: silicate
   BUNDLE_NAME: Silicate
@@ -19,39 +22,29 @@ jobs:
         include:
         - build: x86_64-linux
           os: ubuntu-latest
-          rust: stable
           target: x86_64-unknown-linux-gnu
-          cross: false
           bundle: silicate
         - build: x86_64-macos
           os: macos-latest
-          rust: stable
           target: x86_64-apple-darwin
-          cross: false
           bundle: Silicate-macos-x86_64.dmg
         - build: x86_64-windows
           os: windows-latest
-          rust: stable
           target: x86_64-pc-windows-msvc
-          cross: false
           bundle: Silicate.exe
         - build: aarch64-macos
           os: macos-latest
-          rust: stable
           target: aarch64-apple-darwin
           bundle: Silicate-macos-arm64.dmg
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+        uses: actions/checkout@v7
 
-      - name: Install ${{ matrix.rust }} toolchain
+      - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.target }}
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -64,12 +57,8 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build macOS bundle
-        uses: actions-rs/cargo@v1
         if: matrix.os == 'macos-latest'
-        with:
-          use-cross: ${{ matrix.cross }}
-          command: bundle
-          args: --release --target ${{ matrix.target }}
+        run: cargo bundle --release --target ${{ matrix.target }}
 
       - name: Package macOS DMG
         shell: bash
@@ -92,6 +81,41 @@ jobs:
           fi
 
       - name: Upload Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/${{ matrix.bundle }}
+
+  thumbs_job:
+    name: Build Explorer thumbnail DLL
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: x64
+          target: x86_64-pc-windows-msvc
+        - arch: arm64
+          target: aarch64-pc-windows-msvc
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: thumbs-${{ matrix.arch }}
+
+      - name: Build thumbnail DLL
+        run: cargo xtask thumbs build --arch ${{ matrix.arch }}
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: target/silica-thumbs/win_procreate_thumbs_${{ matrix.arch }}.dll
+          fail_on_unmatched_files: true

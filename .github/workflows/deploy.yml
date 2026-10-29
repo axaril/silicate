@@ -7,23 +7,23 @@ on:
 permissions:
   contents: write
 
+env:
+  TRUNK_VERSION: v0.21.14
+
 jobs:
   build-github-pages:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+        uses: actions/checkout@v7
 
       - name: Cache Git LFS objects
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .git/lfs/objects
-          key: $-git-lfs-$-$
+          key: ${{ runner.os }}-git-lfs-${{ github.sha }}
           restore-keys: |
-            $-git-lfs-$-
-            $-git-lfs-
+            ${{ runner.os }}-git-lfs-
 
       - name: Ensure LFS files are real (materialize)
         shell: bash
@@ -35,17 +35,16 @@ jobs:
           echo "LFS files tracked (pointer -> actual):"
           git lfs ls-files
 
-      - name: Install ${{ matrix.rust }} toolchain
+      - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Download and install Trunk binary
-        run: wget -qO- https://github.com/thedodd/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+        run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
 
       - name: Build
         run: ./trunk build --release
