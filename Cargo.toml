@@ -15,12 +15,14 @@ members = [
     "libs/silica-gpu",
     "libs/silica-thumbs",
     "libs/silica-thumbs-test",
+    "xtask",
 ]
 
 [workspace.dependencies]
 wgpu = "30.0"
 image = { version = "0.25", default-features = false }
 windows = "0.62"
+windows-core = "0.62"
 zip = { version = "9.1.3", default-features = false }
 
 [features]

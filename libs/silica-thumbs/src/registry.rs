@@ -99,7 +99,15 @@ pub fn check_debug_logging_registry() {
     }
 }
 
-pub fn create_registry_keys() -> Result<()> {
+/// Opens `HKEY_CURRENT_USER\Software\Classes`, the per-user equivalent of
+/// `HKEY_CLASSES_ROOT`. Registering here does not require administrator rights.
+pub fn user_classes_root() -> Result<RegistryKeyGuard> {
+    RegistryKeyGuard::create_root_key(HKEY_CURRENT_USER, &w!("Software\\Classes"))
+}
+
+/// Registers the thumbnail provider under `classes_root`, which is either
+/// `HKEY_CLASSES_ROOT` (machine-wide) or [`user_classes_root`] (per-user).
+pub fn create_registry_keys(classes_root: HKEY) -> Result<()> {
     log_message("create_registry_keys: Starting registry key creation");
 
     let clsid_string = format!("{{{CLSID_PROCREATE_THUMBNAIL_PROVIDER:?}}}");
@@ -111,7 +119,7 @@ pub fn create_registry_keys() -> Result<()> {
 
     // Create CLSID\{our-clsid}
     // log_message("create_registry_keys: Creating CLSID root key");
-    let clsid_root_key = RegistryKeyGuard::create_root_key(HKEY_CLASSES_ROOT, &w!("CLSID"))?;
+    let clsid_root_key = RegistryKeyGuard::create_root_key(classes_root, &w!("CLSID"))?;
 
     log_message("create_registry_keys: Creating CLSID subkey and setting description");
     let clsid_key = clsid_root_key.create_subkey(&PCWSTR(to_pcwstr(&clsid_string).as_ptr()))?;
@@ -125,7 +133,7 @@ pub fn create_registry_keys() -> Result<()> {
 
     // Associate with .procreate files
     log_message("create_registry_keys: Associating with .procreate files");
-    let procreate_root_key = RegistryKeyGuard(HKEY_CLASSES_ROOT).create_subkey(&w!(".procreate"))?;
+    let procreate_root_key = RegistryKeyGuard::create_root_key(classes_root, &w!(".procreate"))?;
     let procreate_shellex_key = procreate_root_key.create_subkey(&w!("shellex"))?;
     let procreate_handler_key =
         procreate_shellex_key.create_subkey(&w!("{E357FCCD-A995-4576-B01F-234630154E96}"))?;
@@ -171,7 +179,8 @@ fn get_dll_path() -> Result<String> {
     Ok(String::from_utf16_lossy(&path[..len]))
 }
 
-pub fn delete_registry_keys() -> Result<()> {
+/// Removes the keys written by [`create_registry_keys`] from `classes_root`.
+pub fn delete_registry_keys(classes_root: HKEY) -> Result<()> {
     log_message("delete_registry_keys: Starting registry key deletion");
 
     let clsid_string = format!("{{{CLSID_PROCREATE_THUMBNAIL_PROVIDER:?}}}");
@@ -185,7 +194,7 @@ pub fn delete_registry_keys() -> Result<()> {
     // Helper closure for robust key deletion
     let mut delete_key_with_error_tracking = |key_path: PCWSTR| {
         let result =
-            unsafe { RegDeleteKeyExW(HKEY_CLASSES_ROOT, key_path, WRITE_FLAGS.0, Some(0)) };
+            unsafe { RegDeleteKeyExW(classes_root, key_path, WRITE_FLAGS.0, Some(0)) };
         if result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND {
             // Success or key already gone - both fine for uninstall
         } else {

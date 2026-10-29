@@ -2,7 +2,6 @@
 name = "silica-thumbs"
 version = "1.9.0"
 edition = "2021"
-build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -22,8 +21,7 @@ windows = { workspace = true, features = [
     "Win32_Globalization",
 ] }
 
-windows-core = "0.100"
-windows-registry = "0.100"
+windows-core = { workspace = true }
 
 # ZIP archive and image processing for .procreate files
 zip = { workspace = true, features = ["deflate"] }

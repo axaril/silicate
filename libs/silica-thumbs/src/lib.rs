@@ -9,7 +9,7 @@ use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        System::{self, Com},
+        System::{self, Com, Registry::HKEY_CLASSES_ROOT},
         UI::Shell,
     },
 };
@@ -17,7 +17,7 @@ use windows::{
 use com_provider::ClassFactory;
 use logging::log_message;
 use registry::{
-    check_debug_logging_registry, create_registry_keys, delete_registry_keys,
+    check_debug_logging_registry, create_registry_keys, delete_registry_keys, user_classes_root,
     CLSID_PROCREATE_THUMBNAIL_PROVIDER,
 };
 
@@ -194,7 +194,7 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
 pub extern "system" fn DllRegisterServer() -> HRESULT {
     ffi_guard!(HRESULT, {
         // log_message("DllRegisterServer: Starting registration");
-        match create_registry_keys() {
+        match create_registry_keys(HKEY_CLASSES_ROOT) {
             Ok(_) => {
                 log_message("DllRegisterServer: Registration succeeded");
                 S_OK
@@ -212,7 +212,7 @@ pub extern "system" fn DllRegisterServer() -> HRESULT {
 pub extern "system" fn DllUnregisterServer() -> HRESULT {
     ffi_guard!(HRESULT, {
         // log_message("DllUnregisterServer: Starting unregistration");
-        match delete_registry_keys() {
+        match delete_registry_keys(HKEY_CLASSES_ROOT) {
             Ok(_) => {
                 log_message("DllUnregisterServer: Unregistration succeeded");
                 S_OK
@@ -222,6 +222,42 @@ pub extern "system" fn DllUnregisterServer() -> HRESULT {
                     "DllUnregisterServer: Unregistration failed: {:?}",
                     e
                 ));
+                E_FAIL
+            }
+        }
+    })
+}
+
+/// Per-user (un)registration, invoked by `regsvr32 /n /i:user [/u] <dll>`.
+/// Writes to `HKEY_CURRENT_USER\Software\Classes`, so no administrator rights are needed.
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn DllInstall(install: BOOL, cmd_line: PCWSTR) -> HRESULT {
+    ffi_guard!(HRESULT, {
+        let scope = if cmd_line.is_null() {
+            String::new()
+        } else {
+            unsafe { cmd_line.to_string() }.unwrap_or_default()
+        };
+        if !scope.eq_ignore_ascii_case("user") {
+            log_message(&format!("DllInstall: Unsupported scope '{}'", scope));
+            return E_INVALIDARG;
+        }
+
+        let result = user_classes_root().and_then(|classes_root| {
+            if install.as_bool() {
+                create_registry_keys(classes_root.0)
+            } else {
+                delete_registry_keys(classes_root.0)
+            }
+        });
+        match result {
+            Ok(_) => {
+                log_message("DllInstall: Per-user (un)registration succeeded");
+                S_OK
+            }
+            Err(e) => {
+                log_message(&format!("DllInstall: Per-user (un)registration failed: {:?}", e));
                 E_FAIL
             }
         }

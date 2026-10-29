@@ -81,7 +81,7 @@ impl ProcreateFile {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<(ProcreateFile, ProcreateFileAtlas), SilicaError> {
-        let file_names = archive.file_names().collect::<Vec<_>>();
+        let file_names = archive.file_names().collect::<Result<Vec<_>, _>>()?;
         let chunk_count = file_names.len() as u32;
 
         let size = info.size;
