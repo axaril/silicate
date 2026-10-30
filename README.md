@@ -24,7 +24,7 @@ Silicate is a high-performance, cross-platform viewer and renderer for [Procreat
 
 ## Quick Start
 
-### 🌐 Web Viewer | [Launch](https://avarel.github.io/silicate/)
+### 🌐 Web Viewer | [Launch](https://axaril.github.io/silicate/)
 
 The web viewer provides instant access without installation:
 - Requires a modern browser with WebAssembly and WebGPU support.
@@ -36,10 +36,10 @@ The web viewer provides instant access without installation:
 - Firefox 121+ (with WebGPU enabled)
 - Safari 18+ (macOS Sonoma+)
 
-### 💻 Native Viewer | [Download](https://github.com/Avarel/silicate/releases)
+### 💻 Native Viewer | [Download](https://github.com/Axaril/silicate/releases)
 
 #### Stable Releases
-Download platform-specific binaries from the [Releases page](https://github.com/Avarel/silicate/releases):
+Download platform-specific binaries from the [Releases page](https://github.com/Axaril/silicate/releases):
 - 🪟 **Windows** - `.exe`
 - 🍎 **macOS** - `.dmg` package
 - 🐧 **Linux** - Binary
