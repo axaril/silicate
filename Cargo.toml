@@ -77,7 +77,12 @@ web-sys = { version = "0.3.91", features = [
     "Response",
     "Url",
     "Blob",
-    "BlobPropertyBag"
+    "BlobPropertyBag",
+    "Document",
+    "Element",
+    "File",
+    "FileList",
+    "HtmlInputElement",
 ] }
 
 [profile.release]

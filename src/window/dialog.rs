@@ -20,28 +20,18 @@ impl Dialog {
     }
 
     pub async fn load_dialog(self, node_path: NodePath) {
-        let dialog = cfg_select! {
-            not(target_arch = "wasm32") => {
-                rfd::AsyncFileDialog::new()
-                    .add_filter("All Files", &["*"])
-                    .add_filter("Procreate Files", &["procreate"])
-            }
-            target_arch = "wasm32" => {
-                // On the web, filters become the file input's `accept` attribute.
-                // iOS Safari can't map unknown extensions like `.procreate` to a
-                // file type and greys out every file, so leave it unrestricted.
-                rfd::AsyncFileDialog::new()
-            }
-        }
-        .pick_file();
-
-        let Some(handle) = dialog.await else {
-            self.send_toast(Toast::info("Load cancelled."));
-            return;
-        };
-
         cfg_select! {
             not(target_arch = "wasm32") => {
+                let dialog = rfd::AsyncFileDialog::new()
+                    .add_filter("All Files", &["*"])
+                    .add_filter("Procreate Files", &["procreate"])
+                    .pick_file();
+
+                let Some(handle) = dialog.await else {
+                    self.send_toast(Toast::info("Load cancelled."));
+                    return;
+                };
+
                 self.event_sender
                     .send(AppEvent::LoadFile {
                         path: handle.path().to_path_buf(),
@@ -52,7 +42,20 @@ impl Dialog {
             target_arch = "wasm32" => {
                 use std::sync::Arc;
 
-                let data = handle.read().await;
+                // rfd's web picker can silently fail to open on iOS; see `pick_file`.
+                let data = match crate::web::pick_file().await {
+                    Ok(Some(data)) => data,
+                    Ok(None) => {
+                        self.send_toast(Toast::info("Load cancelled."));
+                        return;
+                    }
+                    Err(err) => {
+                        log::error!("Failed to read file: {err:?}");
+                        self.send_toast(Toast::error("Failed to read file."));
+                        return;
+                    }
+                };
+
                 log::info!("File read complete, loading file...");
                 self.event_sender
                     .send(AppEvent::LoadFile {
