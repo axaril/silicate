@@ -12,7 +12,7 @@
   <img src="media/editor.png" width="400" alt="Silicate Editor View"/>
 </p>
 
-**[🌐 Online Web Viewer](https://avarel.github.io/silicate/)** • **[📥 Download Native App](https://github.com/Avarel/silicate/releases)**
+**[🌐 Online Web Viewer](https://axaril.github.io/silicate/)** • **[📥 Download Native App](https://github.com/Axaril/silicate/releases)**
 
 </div>
 
@@ -45,7 +45,7 @@ Download platform-specific binaries from the [Releases page](https://github.com/
 - 🐧 **Linux** - Binary
 
 #### Development Builds
-Get cutting-edge builds from the [CI pipeline](https://github.com/Avarel/silicate/actions/):
+Get cutting-edge builds from the [CI pipeline](https://github.com/Axaril/silicate/actions/):
 1. Navigate to the latest successful workflow run
 2. Download `release-{your-os}` artifact
 3. Extract and run
@@ -95,7 +95,7 @@ The renderer produces **slightly different results** compared to Procreate's nat
 ### Native Builds
 ```bash
 # Clone the repository
-git clone https://github.com/Avarel/silicate.git
+git clone https://github.com/Axaril/silicate.git
 cd silicate
 
 # Build native release
