@@ -93,6 +93,6 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: thumbs-${{ matrix.arch }}-win_procreate_thumbs_${{ matrix.arch }}.dll
-          path: target/silica-thumbs/win_procreate_thumbs_${{ matrix.arch }}.dll
+          name: thumbs-${{ matrix.arch }}-silica_thumbs_${{ matrix.arch }}.dll
+          path: target/silica-thumbs/silica_thumbs_${{ matrix.arch }}.dll
           if-no-files-found: error

@@ -78,7 +78,7 @@ impl Arch {
             Arch::X86 => "x86",
             Arch::Arm64 => "arm64",
         };
-        format!("win_procreate_thumbs_{suffix}.dll")
+        format!("silica_thumbs_{suffix}.dll")
     }
 }
 

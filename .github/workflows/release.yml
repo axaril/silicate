@@ -117,5 +117,5 @@ jobs:
       - name: Upload Release
         uses: softprops/action-gh-release@v3
         with:
-          files: target/silica-thumbs/win_procreate_thumbs_${{ matrix.arch }}.dll
+          files: target/silica-thumbs/silica_thumbs_${{ matrix.arch }}.dll
           fail_on_unmatched_files: true

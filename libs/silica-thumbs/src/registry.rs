@@ -86,7 +86,7 @@ pub fn read_procreate_registry_dword(value_name: &str) -> Option<u32> {
 // Checks registry for setting for whether to enable debug logging
 pub fn check_debug_logging_registry() {
     // Note: We can't log here initially since logging might not be enabled yet
-    let enable_debug = match read_procreate_registry_dword("win_procreate_thumbs_enable_debug_log") {
+    let enable_debug = match read_procreate_registry_dword("silica_thumbs_enable_debug_log") {
         Some(1) => true, // Only enable debug logging if value exists and equals 1
         _ => false,      // Default to disabled for any other case (missing, 0, or other values)
     };

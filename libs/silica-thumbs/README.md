@@ -7,7 +7,7 @@ Based off Thio's SVG Thumbnail Extension for Windows Explorer.
 From anywhere in the workspace:
 
 ```sh
-cargo xtask thumbs build        # build target/silica-thumbs/win_procreate_thumbs_x64.dll
+cargo xtask thumbs build        # build target/silica-thumbs/silica_thumbs_x64.dll
 cargo xtask thumbs register     # build, then register for the current user (no admin needed)
 cargo xtask thumbs unregister   # remove the current-user registration
 ```
