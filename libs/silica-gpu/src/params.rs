@@ -3,14 +3,14 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-use crate::{ZipArchiveMmap, tiling::CanvasTiling};
+use crate::{ZipArchiveMmap, tiling::CanvasTiling, types::file::TileUpload};
 
 pub(crate) struct LoadParams<'a> {
-    pub(crate) queue: &'a wgpu::Queue,
     pub(crate) archive: &'a ZipArchiveMmap<'a>,
     pub(crate) file_names: Vec<Cow<'a, str>>,
     pub(crate) tiling: CanvasTiling,
-    pub(crate) atlas_texture: &'a wgpu::Texture,
+    /// Receives every decoded tile. Called from rayon worker threads.
+    pub(crate) upload: &'a (dyn Fn(TileUpload) + Sync),
     pub(crate) chunk_id_counter: AtomicU32,
     pub(crate) layer_id_counter: AtomicU32,
 }

@@ -112,6 +112,19 @@ cargo install trunk
 trunk build --release
 ```
 
+#### Multithreaded Web Build (experimental)
+The `wasm-threads` feature decodes layers on a pool of Web Workers. It needs a nightly toolchain with `rust-src` (`rustup component add rust-src --toolchain nightly`) to rebuild `std` with atomics:
+```bash
+export RUSTUP_TOOLCHAIN=nightly
+export CARGO_UNSTABLE_BUILD_STD=std,panic_abort
+export RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
+  -C link-arg=--shared-memory -C link-arg=--max-memory=4294967296 -C link-arg=--import-memory \
+  -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
+  -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base"
+trunk build --release --features wasm-threads
+```
+The page must be cross-origin isolated to use shared memory. `trunk serve` sends the required headers (see `Trunk.toml`), and on static hosts like GitHub Pages the service worker in `assets/sw.js` adds them.
+
 ### Windows Explorer Thumbnails
 ```bash
 # Build the thumbnail DLL and register it with Explorer for the current user

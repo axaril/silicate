@@ -11,7 +11,7 @@
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
     <link data-trunk rel="rust" data-wasm-opt="3"
-        data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int" />
+        data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-threads --enable-mutable-globals" />
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
@@ -134,6 +134,14 @@
             window.addEventListener('load', function () {
                 navigator.serviceWorker.register('sw.js').then((registration) => {
                     console.log("Service worker registration succeeded.");
+                    // On a first visit the page isn't controlled by the service worker yet,
+                    // so it lacks the isolation headers that wasm threads need. Reload once
+                    // the worker takes over.
+                    if (!window.crossOriginIsolated && !navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.addEventListener('controllerchange', () => {
+                            window.location.reload();
+                        });
+                    }
                 });
             });
         }

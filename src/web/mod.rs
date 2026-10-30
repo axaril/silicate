@@ -76,3 +76,34 @@ pub async fn save_blob_as_png(blob: &[u8]) -> Result<(), JsValue> {
 pub async fn fetch_demo_file() -> Result<Vec<u8>, JsValue> {
     fetch_blob("demo/reference.procreate").await
 }
+
+static THREADS_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the rayon pool is backed by Web Workers.
+pub fn threads_enabled() -> bool {
+    THREADS_ENABLED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Spawn one Web Worker per logical core to back the global rayon pool.
+///
+/// Must be called before anything else touches rayon, or rayon will fall
+/// back to a single-threaded pool.
+#[cfg(feature = "wasm-threads")]
+pub async fn init_thread_pool() {
+    let window = web_sys::window().expect("no global `window` exists");
+    let isolated = js_sys::Reflect::get(&window, &JsValue::from_str("crossOriginIsolated"))
+        .is_ok_and(|v| v.is_truthy());
+    if !isolated {
+        log::warn!("Page is not cross-origin isolated; decoding on the main thread");
+        return;
+    }
+
+    let threads = window.navigator().hardware_concurrency().max(1.0) as usize;
+    match JsFuture::from(wasm_bindgen_rayon::init_thread_pool(threads)).await {
+        Ok(_) => {
+            log::info!("Started rayon pool with {threads} workers");
+            THREADS_ENABLED.store(true, std::sync::atomic::Ordering::Release);
+        }
+        Err(err) => log::error!("Failed to start rayon pool: {err:?}"),
+    }
+}

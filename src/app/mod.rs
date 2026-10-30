@@ -35,6 +35,12 @@ pub enum AppEvent {
         bytes: Arc<[u8]>,
         node_path: Option<NodePath>,
     },
+    /// A file finished decoding off the main thread.
+    #[cfg(target_arch = "wasm32")]
+    FileDecoded {
+        result: Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>,
+        node_path: Option<NodePath>,
+    },
     LoadDialog(NodePath),
     SaveDialog(wgpu::Texture),
     Toast(egui_notify::Toast),
@@ -61,6 +67,8 @@ impl std::fmt::Debug for AppEvent {
             AppEvent::RemoveInstance(arg0) => f.debug_tuple("RemoveInstance").field(arg0).finish(),
             AppEvent::Toast(_) => f.debug_tuple("Toast").field(&"...").finish(),
             AppEvent::LoadFile { .. } => f.debug_tuple("LoadFilePath").field(&"...").finish(),
+            #[cfg(target_arch = "wasm32")]
+            AppEvent::FileDecoded { .. } => f.debug_tuple("FileDecoded").field(&"...").finish(),
             AppEvent::LoadDialog(_) => f.debug_tuple("LoadDialog").field(&"...").finish(),
             AppEvent::SaveDialog(_) => f.debug_tuple("SaveDialog").field(&"...").finish(),
             AppEvent::SetTheme(theme) => f.debug_tuple("SetTheme").field(theme).finish(),
@@ -98,19 +106,80 @@ impl App {
         self.load_bytes(&mapping)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_bytes(&self, bytes: &[u8]) -> Result<InstanceKey, SilicaError> {
+        log::info!("Loading file");
+
+        let (file, metadata) = tokio::task::block_in_place(|| {
+            ProcreateFile::open(bytes, &self.device, &self.queue)
+        })?;
+
+        Ok(self.create_instance(file, metadata))
+    }
+
+    /// Decode a file without blocking the browser's main thread.
+    ///
+    /// With the thread pool enabled, tiles are decompressed on rayon workers
+    /// and uploaded here as they arrive, since WebGPU objects can't be used
+    /// from a Web Worker. Pass the result to [`App::create_instance`].
+    #[cfg(target_arch = "wasm32")]
+    pub fn decode_bytes(
+        &self,
+        bytes: Arc<[u8]>,
+    ) -> impl Future<Output = Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>> + 'static
+    {
+        let device = self.device.clone();
+        let queue = self.queue.clone();
+        async move {
+            log::info!("Loading file");
+
+            let (decoder, atlas) = ProcreateFile::prepare(&bytes, &device)?;
+
+            // Without atomics, wgpu objects are `Sync` and rayon runs on this
+            // thread, so tiles can go straight to the queue.
+            #[cfg(not(target_feature = "atomics"))]
+            {
+                let file = decoder.decode(&bytes, &|tile| atlas.upload(&queue, &tile))?;
+                return Ok((file, atlas));
+            }
+
+            #[allow(unreachable_code)]
+            let (tile_tx, mut tile_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            let decode = move || {
+                let result = decoder.decode(&bytes, &|tile| {
+                    let _ = tile_tx.send(tile);
+                });
+                let _ = done_tx.send(result);
+                // `tile_tx` drops here, ending the upload loop below.
+            };
+
+            if crate::web::threads_enabled() {
+                rayon::spawn(decode);
+            } else {
+                // The pool failed to start. Decoding inline buffers every tile
+                // before upload, but rayon::spawn would never run at all.
+                decode();
+            }
+
+            while let Some(tile) = tile_rx.recv().await {
+                atlas.upload(&queue, &tile);
+            }
+
+            let file = done_rx.await.expect("decoder dropped without a result")?;
+            Ok((file, atlas))
+        }
+    }
+
+    pub fn create_instance(
+        &self,
+        file: ProcreateFile,
+        metadata: ProcreateFileAtlas,
+    ) -> InstanceKey {
         let id = InstanceKey::new(
             self.curr_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
-        log::info!("{id} Loading file");
-
-        let open_file = || ProcreateFile::open(bytes, &self.device, &self.queue);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let (file, metadata) = tokio::task::block_in_place(open_file)?;
-        #[cfg(target_arch = "wasm32")]
-        let (file, metadata) = open_file()?;
 
         log::info!(
             "{id} Loaded Procreate document \"{}\" with {} layers",
@@ -196,7 +265,7 @@ impl App {
         self.event_sender
             .send(AppEvent::NewInstance(id, instance, compositor))
             .unwrap();
-        Ok(id)
+        id
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

@@ -2,3 +2,9 @@
 filehash = false
 public_url = "./"
 minify = "on_release"
+
+# Cross-origin isolation, required by the `wasm-threads` feature.
+# Deployed builds get these headers from assets/sw.js instead.
+[serve.headers]
+Cross-Origin-Opener-Policy = "same-origin"
+Cross-Origin-Embedder-Policy = "require-corp"

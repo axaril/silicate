@@ -8,6 +8,8 @@ mod built_info {
 
 #[cfg(target_arch = "wasm32")]
 mod web;
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+pub use web::init_thread_pool;
 
 use app::AppEvent;
 use std::sync::mpsc::{Receiver, Sender};

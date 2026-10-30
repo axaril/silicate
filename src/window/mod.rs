@@ -218,12 +218,26 @@ impl AppInstance {
                 }
             },
             #[cfg(target_arch = "wasm32")]
-            AppEvent::LoadFile { bytes, node_path } => match self.app.load_bytes(&bytes) {
+            AppEvent::LoadFile { bytes, node_path } => {
+                let decode = self.app.decode_bytes(bytes);
+                let event_sender = self.event_sender.clone();
+                let ctx = ctx.clone();
+                rt.spawn(async move {
+                    let result = decode.await;
+                    event_sender
+                        .send(AppEvent::FileDecoded { result, node_path })
+                        .unwrap();
+                    ctx.request_repaint();
+                });
+            }
+            #[cfg(target_arch = "wasm32")]
+            AppEvent::FileDecoded { result, node_path } => match result {
                 Err(err) => {
                     self.toasts
                         .error(format!("File from drag/drop failed to load. Reason: {err}"));
                 }
-                Ok(key) => {
+                Ok((file, metadata)) => {
+                    let key = self.app.create_instance(file, metadata);
                     self.toasts.success("Loaded file from drag/drop.");
                     self.event_sender
                         .send(AppEvent::NewView(
