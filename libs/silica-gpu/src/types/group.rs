@@ -1,5 +1,4 @@
 use crate::{error::SilicaError, params::LoadParams, types::hierarchy::SilicaHierarchy};
-#[cfg(not(target_arch = "wasm32"))]
 use rayon::{iter::ParallelDrainRange, prelude::ParallelIterator};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,15 +36,11 @@ impl SilicaGroup {
         params: &'a LoadParams<'a>,
     ) -> Result<SilicaGroup, SilicaError> {
         Ok(SilicaGroup {
-            children: {
-                #[cfg(not(target_arch = "wasm32"))]
-                let iter = info.children.par_drain(..);
-                #[cfg(target_arch = "wasm32")]
-                let iter = info.children.drain(..);
-                iter
-            }
-            .map(|ir| SilicaHierarchy::load(ir, params))
-            .collect::<Result<Vec<_>, _>>()?,
+            children: info
+                .children
+                .par_drain(..)
+                .map(|ir| SilicaHierarchy::load(ir, params))
+                .collect::<Result<Vec<_>, _>>()?,
             info,
             id: params.allocate_layer_id(),
         })
