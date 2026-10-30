@@ -69,9 +69,17 @@ fn main() -> eframe::Result {
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
 
+    // Thread pool workers instantiate this module too; only the page runs the app.
+    if web_sys::window().is_none() {
+        return;
+    }
+
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     wasm_bindgen_futures::spawn_local(async {
+        #[cfg(feature = "wasm-threads")]
+        silicate::init_thread_pool().await;
+
         let document = web_sys::window()
             .expect("No window")
             .document()
