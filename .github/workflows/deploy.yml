@@ -32,10 +32,13 @@ jobs:
           echo "LFS files tracked (pointer -> actual):"
           git lfs ls-files
 
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # The `wasm-threads` feature rebuilds `std` with atomics, which needs
+      # nightly and the standard library sources.
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-unknown-unknown
+          components: rust-src
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -44,7 +47,20 @@ jobs:
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
 
       - name: Build
-        run: ./trunk build --release
+        env:
+          # Overrides the stable channel pinned in `rust-toolchain`.
+          RUSTUP_TOOLCHAIN: nightly
+          CARGO_UNSTABLE_BUILD_STD: std,panic_abort
+          RUSTFLAGS: >-
+            -C target-feature=+atomics,+bulk-memory,+mutable-globals
+            -C link-arg=--shared-memory
+            -C link-arg=--max-memory=4294967296
+            -C link-arg=--import-memory
+            -C link-arg=--export=__wasm_init_tls
+            -C link-arg=--export=__tls_size
+            -C link-arg=--export=__tls_align
+            -C link-arg=--export=__tls_base
+        run: ./trunk build --release --features wasm-threads
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
