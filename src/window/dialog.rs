@@ -20,37 +20,47 @@ impl Dialog {
     }
 
     pub async fn load_dialog(self, node_path: NodePath) {
-        let dialog = rfd::AsyncFileDialog::new()
-            .add_filter("All Files", &["*"])
-            .add_filter("Procreate Files", &["procreate"])
-            .pick_file();
+        let dialog = cfg_select! {
+            not(target_arch = "wasm32") => {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("All Files", &["*"])
+                    .add_filter("Procreate Files", &["procreate"])
+            }
+            target_arch = "wasm32" => {
+                // On the web, filters become the file input's `accept` attribute.
+                // iOS Safari can't map unknown extensions like `.procreate` to a
+                // file type and greys out every file, so leave it unrestricted.
+                rfd::AsyncFileDialog::new()
+            }
+        }
+        .pick_file();
 
         let Some(handle) = dialog.await else {
             self.send_toast(Toast::info("Load cancelled."));
             return;
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.event_sender
-                .send(AppEvent::LoadFile {
-                    path: handle.path().to_path_buf(),
-                    node_path: Some(node_path),
-                })
-                .unwrap();
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            use std::sync::Arc;
+        cfg_select! {
+            not(target_arch = "wasm32") => {
+                self.event_sender
+                    .send(AppEvent::LoadFile {
+                        path: handle.path().to_path_buf(),
+                        node_path: Some(node_path),
+                    })
+                    .unwrap();
+            }
+            target_arch = "wasm32" => {
+                use std::sync::Arc;
 
-            let data = handle.read().await;
-            log::info!("File read complete, loading file...");
-            self.event_sender
-                .send(AppEvent::LoadFile {
-                    bytes: Arc::from(data),
-                    node_path: Some(node_path),
-                })
-                .unwrap();
+                let data = handle.read().await;
+                log::info!("File read complete, loading file...");
+                self.event_sender
+                    .send(AppEvent::LoadFile {
+                        bytes: Arc::from(data),
+                        node_path: Some(node_path),
+                    })
+                    .unwrap();
+            }
         }
     }
 
