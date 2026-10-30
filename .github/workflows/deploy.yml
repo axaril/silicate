@@ -7,9 +7,6 @@ on:
 permissions:
   contents: write
 
-env:
-  TRUNK_VERSION: v0.21.14
-
 jobs:
   build-github-pages:
     runs-on: ubuntu-latest
@@ -44,7 +41,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Download and install Trunk binary
-        run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+        run: wget -qO- https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
 
       - name: Build
         run: ./trunk build --release
