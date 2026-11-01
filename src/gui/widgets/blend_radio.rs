@@ -24,9 +24,8 @@ impl<'a> BlendModeRadio<'a> {
     }
 
     fn layout_scroll_area(&mut self, ui: &mut Ui) {
-        let min_y = ui.min_rect().min.y;
-        let mut scroll_to_value = 0.0;
-        let mut scroll = ScrollArea::vertical().max_height(70.0).show(ui, |ui| {
+        let loaded = BlendModeRadioLoaded::load(ui.ctx(), ui.scope_id()).is_some();
+        ScrollArea::vertical().max_height(70.0).show(ui, |ui| {
             ui.set_width(ui.available_width());
 
             for b in BlendingMode::all() {
@@ -49,7 +48,13 @@ impl<'a> BlendModeRadio<'a> {
                 let response = ui.allocate_rect(frame.content_ui.min_rect(), Sense::click());
 
                 if selected {
-                    scroll_to_value = response.rect.min.y - min_y;
+                    // Bring the selected mode into view the first time the list is shown.
+                    if !loaded {
+                        response.scroll_to_me_animation(
+                            Some(Align::TOP),
+                            style::ScrollAnimation::none(),
+                        );
+                    }
                     frame.frame.fill = super::ACCENT_COLOR;
                 } else if response.hovered() {
                     frame.frame.fill = ui.visuals().widgets.hovered.bg_fill;
@@ -62,12 +67,7 @@ impl<'a> BlendModeRadio<'a> {
             }
         });
 
-        let loaded = BlendModeRadioLoaded::load(ui.ctx(), ui.id()).is_some();
-        if !loaded {
-            scroll.state.offset = vec2(0.0, scroll_to_value);
-            scroll.state.store(ui.ctx(), scroll.id);
-        }
-        BlendModeRadioLoaded.store(ui.ctx(), ui.id());
+        BlendModeRadioLoaded.store(ui.ctx(), ui.scope_id());
     }
 
     pub fn ui(mut self, ui: &mut Ui) -> Response {

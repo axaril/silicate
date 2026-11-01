@@ -15,7 +15,7 @@ impl Default for PersistedPreferences {
 
 impl PersistedPreferences {
     fn id() -> Id {
-        Id::new("persisted_preference")
+        Id::unique("persisted_preference")
     }
 
     pub fn load(ctx: &Context) -> Option<Self> {

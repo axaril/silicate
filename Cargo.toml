@@ -47,16 +47,16 @@ image = { workspace = true, features = [
 ] }
 
 # Display GUI
-egui = "0.36"
-eframe = { version = "0.36", default-features = false, features = [
+egui = "0.37"
+eframe = { version = "0.37", default-features = false, features = [
     "default_fonts",
     "persistence",
     "wgpu",
     "wayland",
     "x11",
 ] }
-egui_tiles = "0.17"
-egui-notify = "0.23"
+egui_tiles = "0.18"
+egui-notify = "0.24"
 
 serde = { version = "1.0", features = ["derive"] }
 

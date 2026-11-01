@@ -54,7 +54,7 @@ impl AppInstance {
                 grid: true,
                 extended_crosshair: false,
             },
-            canvas_tree: egui_tiles::Tree::empty("view.tiles"),
+            canvas_tree: egui_tiles::Tree::empty(egui::Id::unique("view.tiles")),
             focused_pane: None,
             event_sender: event_sender.clone(),
         };

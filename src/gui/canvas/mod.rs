@@ -5,7 +5,7 @@ use bounds::{AutoBounds, CanvasViewBounds};
 use egui::*;
 
 pub struct CanvasView<'a> {
-    id_source: Id,
+    id_source: IdSalt,
 
     allow_zoom: bool,
     allow_drag: bool,
@@ -50,12 +50,12 @@ impl ViewMemory {
 impl<'a> CanvasView<'a> {
     /// Give a unique id for each plot within the same [`Ui`].
     pub fn new(
-        id_source: impl egui::AsId,
+        id_source: impl AsIdSalt,
         image: Option<Image<'static>>,
         image_rotation: &'a mut f32,
     ) -> Self {
         Self {
-            id_source: Id::new(id_source),
+            id_source: IdSalt::new(id_source),
             allow_zoom: true,
             allow_drag: true,
             allow_scroll: true,
