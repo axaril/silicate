@@ -12,7 +12,7 @@
   <img src="media/editor.png" width="400" alt="Silicate Editor View"/>
 </p>
 
-**[🌐 Online Web Viewer](https://axaril.github.io/silicate/)** • **[📥 Download Native App](https://github.com/Axaril/silicate/releases)**
+**[Online Web Viewer](https://axaril.github.io/silicate/)** • **[Download Native App](https://github.com/Axaril/silicate/releases)**
 
 </div>
 
@@ -24,7 +24,7 @@ Silicate is a high-performance, cross-platform viewer and renderer for [Procreat
 
 ## Quick Start
 
-### 🌐 Web Viewer | [Launch](https://axaril.github.io/silicate/)
+### Web Viewer | [Launch](https://axaril.github.io/silicate/)
 
 The web viewer provides instant access without installation:
 - Requires a modern browser with WebAssembly and WebGPU support.
@@ -36,13 +36,13 @@ The web viewer provides instant access without installation:
 - Firefox 121+ (with WebGPU enabled)
 - Safari 18+ (macOS Sonoma+)
 
-### 💻 Native Viewer | [Download](https://github.com/Axaril/silicate/releases)
+### Native Viewer | [Download](https://github.com/Axaril/silicate/releases)
 
 #### Stable Releases
 Download platform-specific binaries from the [Releases page](https://github.com/Axaril/silicate/releases):
-- 🪟 **Windows** - `.exe`
-- 🍎 **macOS** - `.dmg` package
-- 🐧 **Linux** - Binary
+- **Windows** - `.exe`
+- **macOS** - `.dmg` package
+- **Linux** - Binary
 
 #### Development Builds
 Get cutting-edge builds from the [CI pipeline](https://github.com/Axaril/silicate/actions/):
@@ -56,7 +56,7 @@ Get cutting-edge builds from the [CI pipeline](https://github.com/Axaril/silicat
   - Allow the app in `System Preferences` → `Security & Privacy`
   - Remove quarantine with the Terminal `xattr -d com.apple.quarantine <file_path>`
 
-### 🖼️ Windows Explorer Thumbnails
+### Windows Explorer Thumbnails
 
 Silicate includes a thumbnail provider for Windows Explorer ([`libs/silica-thumbs`](libs/silica-thumbs)) that shows previews of `.procreate` files in File Explorer, just like images.
 - Uses the `QuickLook/Thumbnail.png` preview embedded in each file, so thumbnails appear instantly without compositing.
@@ -140,15 +140,15 @@ Explorer keeps the DLL loaded after showing a thumbnail, so re-registering a reb
 All `.procreate` files are **standard ZIP archives** with the following structure:
 
 ```
-📦 filename.procreate (ZIP archive)
-├── 📁 {UUID}/
-│   └── 📄 {col}~{row}.chunk          # LZO-compressed RGBA tile data
-├── 📁 QuickLook/
-│   └── 🖼️ Thumbnail.png              # Low-quality preview
-├── 📁 video/
-│   └── 📁 segments/
-│       └── 🎬 segment-X.mp4          # Timelapse video segments
-└── 📄 Document.archive               # NSKeyedArchive with layer metadata
+filename.procreate (ZIP archive)
+├── {UUID}/
+│   └── {col}~{row}.chunk          # LZO-compressed RGBA tile data
+├── QuickLook/
+│   └── Thumbnail.png              # Low-quality preview
+├── video/
+│   └── segments/
+│       └── segment-X.mp4          # Timelapse video segments
+└── Document.archive               # NSKeyedArchive with layer metadata
 ```
 
 ### Component Details
