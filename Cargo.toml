@@ -55,7 +55,7 @@ eframe = { version = "0.36", default-features = false, features = [
     "wayland",
     "x11",
 ] }
-egui_dock = "0.21"
+egui_tiles = "0.17"
 egui-notify = "0.23"
 
 serde = { version = "1.0", features = ["derive"] }

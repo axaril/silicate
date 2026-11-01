@@ -3,8 +3,7 @@ mod silicate;
 mod widgets;
 
 use egui::{Frame, *};
-use egui_dock::NodePath;
-use egui_dock::tab_viewer::OnCloseResponse;
+use egui_tiles::{Tile, TileId, Tiles, UiResponse};
 use std::collections::HashMap;
 use std::sync::{Arc, mpsc::Sender};
 
@@ -102,18 +101,17 @@ struct CanvasGui<'a> {
     event_sender: &'a Sender<AppEvent>,
     instances: &'a mut HashMap<InstanceKey, Instance>,
     view_options: &'a mut ViewOptions,
+    focused_pane: &'a mut Option<TileId>,
 }
 
-impl egui_dock::TabViewer for CanvasGui<'_> {
-    type Tab = InstanceKey;
+impl egui_tiles::Behavior<InstanceKey> for CanvasGui<'_> {
+    fn pane_ui(&mut self, ui: &mut Ui, tile_id: TileId, tab: &mut InstanceKey) -> UiResponse {
+        if ui.ui_contains_pointer() && ui.input(|i| i.pointer.any_pressed()) {
+            *self.focused_pane = Some(tile_id);
+        }
 
-    fn allowed_in_windows(&self, _: &mut Self::Tab) -> bool {
-        false
-    }
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         let Some(instance) = self.instances.get_mut(tab) else {
-            return;
+            return UiResponse::None;
         };
 
         let mut overlay_ui_left = ui.new_child(UiBuilder::new());
@@ -233,20 +231,10 @@ impl egui_dock::TabViewer for CanvasGui<'_> {
         );
 
         instance.submit_to_compositor();
+        UiResponse::None
     }
 
-    fn on_close(&mut self, tab: &mut Self::Tab) -> OnCloseResponse {
-        self.event_sender
-            .send(AppEvent::RemoveInstance(*tab))
-            .unwrap();
-        OnCloseResponse::Close
-    }
-
-    fn on_add(&mut self, node_path: egui_dock::NodePath) {
-        self.event_sender.send(AppEvent::LoadDialog(node_path)).ok();
-    }
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+    fn tab_title_for_pane(&mut self, tab: &InstanceKey) -> WidgetText {
         self.instances
             .get(tab)
             .and_then(|tab| tab.file.name.to_owned())
@@ -254,8 +242,142 @@ impl egui_dock::TabViewer for CanvasGui<'_> {
             .into()
     }
 
-    fn id(&mut self, tab: &mut Self::Tab) -> Id {
-        Id::new(*tab)
+    fn is_tab_closable(&self, tiles: &Tiles<InstanceKey>, tile_id: TileId) -> bool {
+        matches!(tiles.get(tile_id), Some(Tile::Pane(_)))
+    }
+
+    fn on_tab_close(&mut self, tiles: &mut Tiles<InstanceKey>, tile_id: TileId) -> bool {
+        if let Some(tab) = tiles.get_pane(&tile_id) {
+            self.event_sender
+                .send(AppEvent::RemoveInstance(*tab))
+                .unwrap();
+        }
+        true
+    }
+
+    fn tab_ui(
+        &mut self,
+        tiles: &mut Tiles<InstanceKey>,
+        ui: &mut Ui,
+        id: Id,
+        tile_id: TileId,
+        state: &egui_tiles::TabState,
+    ) -> Response {
+        const TAB_MARGIN: Margin = Margin::symmetric(5, 10);
+        const TAB_PADDING: f32 = 8.0;
+        const CLOSE_SIZE: f32 = 14.0;
+
+        let galley = self.tab_title_for_tile(tiles, tile_id).into_galley(
+            ui,
+            Some(TextWrapMode::Extend),
+            f32::INFINITY,
+            TextStyle::Button,
+        );
+
+        let close_width = if state.closable {
+            TAB_PADDING + CLOSE_SIZE
+        } else {
+            0.0
+        };
+        let width = galley.size().x + 2.0 * TAB_PADDING + close_width + TAB_MARGIN.sum().x;
+        let (_, outer_rect) = ui.allocate_space(vec2(width, ui.available_height()));
+        let tab_rect = outer_rect - TAB_MARGIN;
+
+        let response = ui
+            .interact(tab_rect, id, Sense::click_and_drag())
+            .on_hover_cursor(CursorIcon::Grab);
+
+        if response.clicked() {
+            *self.focused_pane = Some(tile_id);
+        }
+
+        if state.is_being_dragged || !ui.is_rect_visible(tab_rect) {
+            return response;
+        }
+
+        let (bg_fill, text_color) = if state.active {
+            (widgets::ACCENT_COLOR, Color32::WHITE)
+        } else if response.hovered() {
+            (
+                ui.visuals().widgets.hovered.bg_fill,
+                ui.visuals().text_color(),
+            )
+        } else {
+            (Color32::TRANSPARENT, ui.visuals().text_color())
+        };
+        ui.painter()
+            .rect_filled(tab_rect, CornerRadius::same(5), bg_fill);
+
+        let text_rect = tab_rect.shrink2(vec2(TAB_PADDING, 0.0));
+        let text_pos = Align2::LEFT_CENTER
+            .align_size_within_rect(galley.size(), text_rect)
+            .min;
+        ui.painter().galley(text_pos, galley, text_color);
+
+        if state.closable {
+            let close_rect =
+                Align2::RIGHT_CENTER.align_size_within_rect(Vec2::splat(CLOSE_SIZE), text_rect);
+            let close_response = ui
+                .interact(close_rect, id.with("close"), Sense::click())
+                .on_hover_cursor(CursorIcon::Default);
+
+            let cross_rect = close_rect.shrink(if close_response.hovered() { 2.0 } else { 3.0 });
+            let stroke = Stroke::new(1.5, text_color);
+            ui.painter()
+                .line_segment([cross_rect.left_top(), cross_rect.right_bottom()], stroke);
+            ui.painter()
+                .line_segment([cross_rect.right_top(), cross_rect.left_bottom()], stroke);
+
+            if (close_response.clicked() || response.clicked_by(PointerButton::Middle))
+                && self.on_tab_close(tiles, tile_id)
+            {
+                tiles.remove(tile_id);
+            }
+        }
+
+        response
+    }
+
+    fn tab_bar_trailing_ui(
+        &mut self,
+        _tiles: &Tiles<InstanceKey>,
+        ui: &mut Ui,
+        tile_id: TileId,
+        _tabs: &egui_tiles::Tabs,
+    ) {
+        ui.add_space(5.0);
+        if ui
+            .add(Button::new("+").frame(false).min_size(Vec2::splat(30.0)))
+            .on_hover_text("Open File")
+            .clicked()
+        {
+            self.event_sender
+                .send(AppEvent::LoadDialog(Some(tile_id)))
+                .ok();
+        }
+    }
+
+    fn tab_bar_height(&self, _style: &Style) -> f32 {
+        50.0
+    }
+
+    fn gap_width(&self, _style: &Style) -> f32 {
+        2.0
+    }
+
+    fn tab_bar_color(&self, _visuals: &Visuals) -> Color32 {
+        Color32::TRANSPARENT
+    }
+
+    fn tab_bar_hline_stroke(&self, _visuals: &Visuals) -> Stroke {
+        Stroke::NONE
+    }
+
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        egui_tiles::SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
     }
 }
 
@@ -265,10 +387,34 @@ pub struct ViewerGui {
     pub instances: HashMap<InstanceKey, Instance>,
 
     pub view_options: ViewOptions,
-    pub canvas_tree: egui_dock::DockState<InstanceKey>,
+    pub canvas_tree: egui_tiles::Tree<InstanceKey>,
+    /// The pane the user last interacted with, where new views open by default.
+    pub focused_pane: Option<TileId>,
 }
 
 impl ViewerGui {
+    /// Open a view of `key` as a new tab in the `tabs` container, or beside
+    /// the focused pane if none is given.
+    pub fn add_view(&mut self, tabs: Option<TileId>, key: InstanceKey) {
+        let tree = &mut self.canvas_tree;
+        let pane = tree.tiles.insert_pane(key);
+
+        let target = tabs
+            .or_else(|| self.focused_pane.and_then(|p| tree.tiles.parent_of(p)))
+            .or(tree.root)
+            .filter(|&t| tree.tiles.get_container(t).is_some());
+
+        if let Some(Tile::Container(container)) = target.and_then(|t| tree.tiles.get_mut(t)) {
+            container.add_child(pane);
+        } else {
+            let children = tree.root.into_iter().chain([pane]).collect();
+            tree.root = Some(tree.tiles.insert_tab_tile(children));
+        }
+
+        tree.make_active(|id, _| id == pane);
+        self.focused_pane = Some(pane);
+    }
+
     fn layout_view(&mut self, ui: &mut Ui) {
         ui.set_min_size(ui.available_size());
 
@@ -327,9 +473,7 @@ impl ViewerGui {
                         ui.separator();
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                             if ui.button("Open File").clicked() {
-                                self.event_sender
-                                    .send(AppEvent::LoadDialog(NodePath::MAIN_ROOT))
-                                    .ok();
+                                self.event_sender.send(AppEvent::LoadDialog(None)).ok();
                             }
 
                             #[cfg(target_arch = "wasm32")]
@@ -340,54 +484,16 @@ impl ViewerGui {
                     });
             });
         } else {
-            egui_dock::DockArea::new(&mut self.canvas_tree)
-                .id(Id::new("view.dock"))
-                .style({
-                    let corner_radius = CornerRadius::same(5);
-
-                    let mut style = egui_dock::Style::from_egui(ui.style());
-                    style.tab.tab_body.inner_margin = Margin::ZERO;
-                    style.tab_bar.height = 50.0;
-                    style.tab_bar.hline_color = Color32::TRANSPARENT;
-                    style.tab_bar.inner_margin = Margin::same(10);
-
-                    style.tab.spacing = 10.0;
-
-                    style.tab_bar.bg_fill = Color32::TRANSPARENT;
-
-                    style.tab.active.corner_radius = corner_radius;
-                    style.tab.active.bg_fill = Color32::TRANSPARENT;
-                    style.tab.active.outline_color = Color32::TRANSPARENT;
-
-                    style.tab.inactive.corner_radius = corner_radius;
-                    style.tab.inactive.bg_fill = Color32::TRANSPARENT;
-                    style.tab.inactive.outline_color = Color32::TRANSPARENT;
-
-                    style.tab.focused.corner_radius = corner_radius;
-                    style.tab.focused.outline_color = Color32::TRANSPARENT;
-                    style.tab.focused.bg_fill = widgets::ACCENT_COLOR;
-                    style.tab.focused.text_color = Color32::WHITE;
-
-                    style.tab.hovered.corner_radius = corner_radius;
-                    style.tab.hovered.bg_fill = ui.visuals().widgets.hovered.bg_fill;
-                    style.tab.hovered.outline_color = Color32::TRANSPARENT;
-
-                    style.buttons.close_tab_bg_fill = Color32::TRANSPARENT;
-
-                    style
-                })
-                .show_add_buttons(true)
-                .show_leaf_close_all_buttons(false)
-                .show_leaf_collapse_buttons(false)
-                .show_inside(
-                    ui,
-                    &mut CanvasGui {
-                        app: &self.app,
-                        view_options: &mut self.view_options,
-                        instances: &mut self.instances,
-                        event_sender: &self.event_sender,
-                    },
-                );
+            self.canvas_tree.ui(
+                &mut CanvasGui {
+                    app: &self.app,
+                    view_options: &mut self.view_options,
+                    instances: &mut self.instances,
+                    event_sender: &self.event_sender,
+                    focused_pane: &mut self.focused_pane,
+                },
+                ui,
+            );
         }
     }
 
@@ -404,7 +510,7 @@ impl ViewerGui {
                                 self.event_sender
                                     .send(AppEvent::LoadFile {
                                         path: file.path().to_path_buf(),
-                                        node_path: None,
+                                        tabs: None,
                                     })
                                     .ok();
                             }
@@ -416,7 +522,7 @@ impl ViewerGui {
                                     let event = match file.bytes_async().await {
                                         Ok(bytes) => AppEvent::LoadFile {
                                             bytes: Arc::from(bytes),
-                                            node_path: None,
+                                            tabs: None,
                                         },
                                         Err(err) => AppEvent::Toast(egui_notify::Toast::error(
                                             format!("Failed to read dropped file. Reason: {err}"),

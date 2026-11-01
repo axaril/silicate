@@ -1,6 +1,6 @@
 use eframe::wgpu;
-use egui_dock::NodePath;
 use egui_notify::Toast;
+use egui_tiles::TileId;
 use silicate_compositor::buffer::BufferDimensions;
 use std::sync::mpsc::Sender;
 
@@ -19,7 +19,7 @@ impl Dialog {
         self.event_sender.send(AppEvent::Toast(toast)).ok();
     }
 
-    pub async fn load_dialog(self, node_path: NodePath) {
+    pub async fn load_dialog(self, tabs: Option<TileId>) {
         cfg_select! {
             not(target_arch = "wasm32") => {
                 let dialog = rfd::AsyncFileDialog::new()
@@ -35,7 +35,7 @@ impl Dialog {
                 self.event_sender
                     .send(AppEvent::LoadFile {
                         path: handle.path().to_path_buf(),
-                        node_path: Some(node_path),
+                        tabs,
                     })
                     .unwrap();
             }
@@ -60,7 +60,7 @@ impl Dialog {
                 self.event_sender
                     .send(AppEvent::LoadFile {
                         bytes: Arc::from(data),
-                        node_path: Some(node_path),
+                        tabs,
                     })
                     .unwrap();
             }

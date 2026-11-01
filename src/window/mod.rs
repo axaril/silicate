@@ -54,7 +54,8 @@ impl AppInstance {
                 grid: true,
                 extended_crosshair: false,
             },
-            canvas_tree: egui_dock::DockState::new(Vec::new()),
+            canvas_tree: egui_tiles::Tree::empty("view.tiles"),
+            focused_pane: None,
             event_sender: event_sender.clone(),
         };
 
@@ -75,10 +76,7 @@ impl AppInstance {
     pub fn load_files(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
             self.event_sender
-                .send(AppEvent::LoadFile {
-                    path,
-                    node_path: None,
-                })
+                .send(AppEvent::LoadFile { path, tabs: None })
                 .unwrap();
         }
     }
@@ -199,10 +197,7 @@ impl AppInstance {
                 self.toasts.add(toast);
             }
             #[cfg(not(target_arch = "wasm32"))]
-            AppEvent::LoadFile {
-                path,
-                node_path
-            } => match self.app.load_file(&path) {
+            AppEvent::LoadFile { path, tabs } => match self.app.load_file(&path) {
                 Err(err) => {
                     self.toasts
                         .error(format!("File from drag/drop failed to load. Reason: {err}"));
@@ -210,28 +205,25 @@ impl AppInstance {
                 Ok(key) => {
                     self.toasts.success("Loaded file from drag/drop.");
                     self.event_sender
-                        .send(AppEvent::NewView(
-                            node_path.unwrap_or(egui_dock::NodePath::MAIN_ROOT),
-                            key,
-                        ))
+                        .send(AppEvent::NewView(tabs, key))
                         .unwrap();
                 }
             },
             #[cfg(target_arch = "wasm32")]
-            AppEvent::LoadFile { bytes, node_path } => {
+            AppEvent::LoadFile { bytes, tabs } => {
                 let decode = self.app.decode_bytes(bytes);
                 let event_sender = self.event_sender.clone();
                 let ctx = ctx.clone();
                 rt.spawn(async move {
                     let result = decode.await;
                     event_sender
-                        .send(AppEvent::FileDecoded { result, node_path })
+                        .send(AppEvent::FileDecoded { result, tabs })
                         .unwrap();
                     ctx.request_repaint();
                 });
             }
             #[cfg(target_arch = "wasm32")]
-            AppEvent::FileDecoded { result, node_path } => match result {
+            AppEvent::FileDecoded { result, tabs } => match result {
                 Err(err) => {
                     self.toasts
                         .error(format!("File from drag/drop failed to load. Reason: {err}"));
@@ -240,15 +232,12 @@ impl AppInstance {
                     let key = self.app.create_instance(file, metadata);
                     self.toasts.success("Loaded file from drag/drop.");
                     self.event_sender
-                        .send(AppEvent::NewView(
-                            node_path.unwrap_or(egui_dock::NodePath::MAIN_ROOT),
-                            key,
-                        ))
+                        .send(AppEvent::NewView(tabs, key))
                         .unwrap();
                 }
             },
-            AppEvent::LoadDialog(node_path) => {
-                let dialog = Dialog::new(self.event_sender.clone()).load_dialog(node_path);
+            AppEvent::LoadDialog(tabs) => {
+                let dialog = Dialog::new(self.event_sender.clone()).load_dialog(tabs);
                 rt.spawn(dialog);
             }
             AppEvent::SaveDialog(texture) => {
@@ -263,11 +252,8 @@ impl AppInstance {
                     rt.spawn(dialog);
                 }
             }
-            AppEvent::NewView(node_path, id) => {
-                self.viewer
-                    .canvas_tree
-                    .set_focused_node_and_surface(node_path);
-                self.viewer.canvas_tree.push_to_focused_leaf(id);
+            AppEvent::NewView(tabs, id) => {
+                self.viewer.add_view(tabs, id);
             }
             AppEvent::SetTheme(theme) => {
                 ctx.set_theme(theme);
@@ -283,7 +269,7 @@ impl AppInstance {
                             event_sender
                                 .send(AppEvent::LoadFile {
                                     bytes: Arc::from(bytes),
-                                    node_path: None,
+                                    tabs: None,
                                 })
                                 .unwrap();
                         }

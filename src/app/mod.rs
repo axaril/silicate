@@ -4,7 +4,7 @@ pub mod instance;
 
 use compositor::CompositorApp;
 use eframe::egui_wgpu::wgpu;
-use egui_dock::{NodePath};
+use egui_tiles::TileId;
 use instance::{Instance, InstanceKey};
 use silica_gpu::{ProcreateFile, ProcreateFileAtlas, error::SilicaError};
 use silicate_compositor::{
@@ -24,7 +24,7 @@ use std::{fs::OpenOptions, path::Path, path::PathBuf};
 
 pub enum AppEvent {
     NewInstance(InstanceKey, Instance, CompositorApp),
-    NewView(NodePath, InstanceKey),
+    NewView(Option<TileId>, InstanceKey),
     RebindTexture(InstanceKey),
     RebindPreviews(InstanceKey),
     RemoveInstance(InstanceKey),
@@ -33,15 +33,15 @@ pub enum AppEvent {
         path: PathBuf,
         #[cfg(target_arch = "wasm32")]
         bytes: Arc<[u8]>,
-        node_path: Option<NodePath>,
+        tabs: Option<TileId>,
     },
     /// A file finished decoding off the main thread.
     #[cfg(target_arch = "wasm32")]
     FileDecoded {
         result: Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>,
-        node_path: Option<NodePath>,
+        tabs: Option<TileId>,
     },
-    LoadDialog(NodePath),
+    LoadDialog(Option<TileId>),
     SaveDialog(wgpu::Texture),
     Toast(egui_notify::Toast),
     SetTheme(egui::ThemePreference),
@@ -57,9 +57,9 @@ impl std::fmt::Debug for AppEvent {
                 .field(arg0)
                 .field(arg1)
                 .finish(),
-            AppEvent::NewView(node_path, instance_key) => f
+            AppEvent::NewView(tabs, instance_key) => f
                 .debug_tuple("NewView")
-                .field(node_path)
+                .field(tabs)
                 .field(instance_key)
                 .finish(),
             AppEvent::RebindTexture(arg0) => f.debug_tuple("RebindTexture").field(arg0).finish(),
