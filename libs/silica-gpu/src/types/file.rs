@@ -5,8 +5,9 @@ use crate::types::{hierarchy::SilicaHierarchy, layer::SilicaLayer};
 use rayon::{iter::ParallelDrainRange, prelude::ParallelIterator};
 use silica::ns_archive::NsArchive;
 use silica::ns_archive::Size;
+use std::collections::HashSet;
 use std::io::{Cursor, Read};
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use zip::read::ZipArchive;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +34,14 @@ impl std::ops::DerefMut for ProcreateFile {
 pub struct ProcreateFileAtlas {
     pub atlas_texture: wgpu::Texture,
     pub canvas_tiling: CanvasTiling,
+    /// Bytes written with `write_texture` since the last queue submit.
+    pending_upload_bytes: AtomicU64,
 }
+
+/// wgpu holds every `write_texture` in staging memory until the next queue
+/// submit. Submitting after this many bytes stops a large file from staging
+/// a second copy of its whole atlas before the first render.
+const UPLOAD_FLUSH_BYTES: u64 = 64 * 1024 * 1024;
 
 /// A decoded tile of pixel data waiting to be written into the atlas.
 pub struct TileUpload {
@@ -87,7 +95,27 @@ impl ProcreateFile {
         };
 
         let info = silica::ProcreateFile::from_ns(&nka)?;
-        let chunk_count = archive.len() as u32;
+
+        // Only layer, mask and composite tiles go into the atlas. The archive
+        // also holds thumbnails and timelapse video, which aren't loaded.
+        let chunk_count = {
+            let mut uuids = HashSet::new();
+            collect_layer_uuids(&info.layers, &mut uuids);
+            if let Some(composite) = &info.composite {
+                uuids.insert(composite.uuid.as_str());
+            }
+            let mut tiles = 0;
+            for name in archive.file_names() {
+                if name?
+                    .split_once('/')
+                    .is_some_and(|(dir, _)| uuids.contains(dir))
+                {
+                    tiles += 1;
+                }
+            }
+            // Atlas slot 0 is reserved as an empty tile.
+            tiles + 1
+        };
 
         let size = info.size;
         let tile_size = info.tile_size;
@@ -120,6 +148,7 @@ impl ProcreateFile {
             ProcreateFileAtlas {
                 atlas_texture,
                 canvas_tiling: tiling,
+                pending_upload_bytes: AtomicU64::new(0),
             },
         ))
     }
@@ -234,5 +263,34 @@ impl ProcreateFileAtlas {
             },
             tile.size,
         );
+
+        let size = tile.data.len() as u64;
+        let pending = self.pending_upload_bytes.fetch_add(size, Ordering::Relaxed) + size;
+        if pending >= UPLOAD_FLUSH_BYTES
+            && self
+                .pending_upload_bytes
+                .compare_exchange(pending, 0, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            // An empty submit flushes the queued writes and lets wgpu free
+            // their staging memory once the GPU has copied them.
+            queue.submit([]);
+        }
+    }
+}
+
+/// Collect the UUIDs of every layer and mask, whose tiles live in the
+/// archive directory of the same name.
+fn collect_layer_uuids<'a>(layers: &'a [silica::SilicaHierarchy], uuids: &mut HashSet<&'a str>) {
+    for layer in layers {
+        match layer {
+            silica::SilicaHierarchy::Layer(layer) => {
+                uuids.insert(layer.uuid.as_str());
+                if let Some(mask) = &layer.mask {
+                    uuids.insert(mask.uuid.as_str());
+                }
+            }
+            silica::SilicaHierarchy::Group(group) => collect_layer_uuids(&group.children, uuids),
+        }
     }
 }

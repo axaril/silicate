@@ -65,14 +65,20 @@ impl Instance {
         pipeline: &Pipeline,
     ) {
         let file = &self.file;
-        let aspect_ratio = file.size.width as f32 / file.size.height as f32;
-        let scaled_height = (256.0 * aspect_ratio) as u32;
+        // Fit the longest side to 256px, keeping the canvas aspect ratio.
+        const PREVIEW_SIZE: u32 = 256;
+        let (width, height) = (file.size.width.max(1), file.size.height.max(1));
+        let (preview_width, preview_height) = if width >= height {
+            (PREVIEW_SIZE, (PREVIEW_SIZE * height / width).max(1))
+        } else {
+            ((PREVIEW_SIZE * width / height).max(1), PREVIEW_SIZE)
+        };
 
         let preview_textures = {
             let preview_textures = wgpu::Texture::empty_layers(
                 device,
-                256,
-                scaled_height,
+                preview_width,
+                preview_height,
                 file.layer_count(true) + 1,
                 wgpu::Texture::OUTPUT_USAGE,
             );

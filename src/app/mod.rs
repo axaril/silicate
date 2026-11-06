@@ -143,22 +143,40 @@ impl App {
                 return Ok((file, atlas));
             }
 
+            // Wasm memory never shrinks, so decoded tiles waiting for upload
+            // count towards the page's memory for its whole lifetime. With the
+            // pool running, workers block once this many tiles are queued.
+            const MAX_QUEUED_TILES: usize = 64;
+
             #[allow(unreachable_code)]
-            let (tile_tx, mut tile_rx) = tokio::sync::mpsc::unbounded_channel();
+            let threaded = crate::web::threads_enabled();
+            let capacity = if threaded {
+                MAX_QUEUED_TILES
+            } else {
+                // The pool failed to start, so decoding runs inline before the
+                // upload loop and every tile has to fit in the queue.
+                let atlas_tiling = atlas.canvas_tiling.atlas;
+                (atlas_tiling.cols * atlas_tiling.rows * atlas_tiling.layers) as usize
+            };
+
+            let (tile_tx, mut tile_rx) = tokio::sync::mpsc::channel(capacity);
             let (done_tx, done_rx) = tokio::sync::oneshot::channel();
             let decode = move || {
                 let result = decoder.decode(&bytes, &|tile| {
-                    let _ = tile_tx.send(tile);
+                    let _ = if threaded {
+                        // Rayon workers are Web Workers, which may block.
+                        tile_tx.blocking_send(tile).ok()
+                    } else {
+                        tile_tx.try_send(tile).ok()
+                    };
                 });
                 let _ = done_tx.send(result);
                 // `tile_tx` drops here, ending the upload loop below.
             };
 
-            if crate::web::threads_enabled() {
+            if threaded {
                 rayon::spawn(decode);
             } else {
-                // The pool failed to start. Decoding inline buffers every tile
-                // before upload, but rayon::spawn would never run at all.
                 decode();
             }
 
@@ -190,6 +208,7 @@ impl App {
         let ProcreateFileAtlas {
             atlas_texture,
             canvas_tiling,
+            ..
         } = metadata;
 
         let canvas = CompositorCanvasTiling::new(
