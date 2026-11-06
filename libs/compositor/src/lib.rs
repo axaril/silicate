@@ -46,6 +46,76 @@ pub struct Compositor {
     queue: wgpu::Queue,
     buffers: CompositorBuffers,
     atlas_texture: wgpu::Texture,
+    /// Cached bind groups, rebuilt only when a bound buffer is reallocated.
+    bind_groups: Option<BindGroups>,
+}
+
+/// Bind groups for a render pass, along with the layouts they were made for.
+struct BindGroups {
+    canvas_layout: wgpu::BindGroupLayout,
+    blending_layout: wgpu::BindGroupLayout,
+    canvas: wgpu::BindGroup,
+    blending: wgpu::BindGroup,
+}
+
+impl BindGroups {
+    fn new(
+        device: &wgpu::Device,
+        pipeline: &Pipeline,
+        buffers: &CompositorBuffers,
+        atlas_texture: &wgpu::Texture,
+    ) -> Self {
+        let canvas = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.canvas_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.canvas.buffer().as_entire_binding(),
+            }],
+            label: Some("canvas_bind_group"),
+        });
+
+        // Storage buffers are bound whole, since they may hold more than the
+        // current data. The shader only indexes valid entries.
+        let atlas_view = atlas_texture.create_array_view();
+        let blending = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.blending_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffers.chunks.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffers.layers.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffers.silos.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: buffers.background.buffer().as_entire_binding(),
+                },
+            ],
+            label: Some("blending_bind_group"),
+        });
+
+        Self {
+            canvas_layout: pipeline.canvas_bind_group_layout.clone(),
+            blending_layout: pipeline.blending_bind_group_layout.clone(),
+            canvas,
+            blending,
+        }
+    }
+
+    fn matches(&self, pipeline: &Pipeline) -> bool {
+        self.canvas_layout == pipeline.canvas_bind_group_layout
+            && self.blending_layout == pipeline.blending_bind_group_layout
+    }
 }
 
 impl Compositor {
@@ -62,6 +132,7 @@ impl Compositor {
             queue: queue.clone(),
             buffers: CompositorBuffers::new(device, queue, canvas, atlas_data),
             atlas_texture,
+            bind_groups: None,
         }
     }
 
@@ -101,6 +172,26 @@ impl Compositor {
 
         self.buffers.upload_chunks();
 
+        // Rebuild the bind groups only if a bound buffer was reallocated or a
+        // different pipeline layout is being used.
+        let reallocated = self.buffers.take_reallocated();
+        if reallocated
+            || self
+                .bind_groups
+                .as_ref()
+                .is_some_and(|groups| !groups.matches(pipeline))
+        {
+            self.bind_groups = None;
+        }
+        if self.bind_groups.is_none() {
+            self.bind_groups = Some(BindGroups::new(
+                &self.device,
+                pipeline,
+                &self.buffers,
+                &self.atlas_texture,
+            ));
+        }
+
         self.queue.submit([{
             let mut encoder = self
                 .device
@@ -118,44 +209,10 @@ impl Compositor {
         encoder: &mut CommandEncoder,
         output_view: TextureView,
     ) {
-        // TODO: recreate bind groups only if necessary
-        let canvas_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &pipeline.canvas_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.buffers.canvas.buffer().as_entire_binding(),
-            }],
-            label: Some("canvas_bind_group"),
-        });
-
-        let blending_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &pipeline.blending_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        &self.atlas_texture.create_array_view(),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.buffers.chunks.as_binding_resource(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.buffers.layers.as_binding_resource(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.buffers.silos.as_binding_resource(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.buffers.background.buffer().as_entire_binding(),
-                },
-            ],
-            label: Some("mixing_bind_group"),
-        });
+        let bind_groups = self
+            .bind_groups
+            .as_ref()
+            .expect("bind groups are created before rendering");
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -176,8 +233,8 @@ impl Compositor {
 
         // Finish and set the render pass's binding groups and data
         pass.set_pipeline(&pipeline.render_pipeline);
-        pass.set_bind_group(0, &canvas_bind_group, &[]);
-        pass.set_bind_group(1, &blending_bind_group, &[]);
+        pass.set_bind_group(0, &bind_groups.canvas, &[]);
+        pass.set_bind_group(1, &bind_groups.blending, &[]);
         // One 4-vertex triangle strip per canvas tile; the shader derives the
         // quad corners and tile position from the vertex/instance indices.
         let canvas = self.buffers.canvas.data();

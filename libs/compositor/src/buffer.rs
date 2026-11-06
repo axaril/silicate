@@ -135,24 +135,20 @@ where
         (self.data.len() * std::mem::size_of::<T>()) as u64
     }
 
-    pub fn as_binding_resource(&self) -> wgpu::BindingResource<'_> {
-        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-            buffer: self.buffer(),
-            offset: 0,
-            size: std::num::NonZeroU64::new(self.data_len()),
-        })
-    }
-
-    /// Load the GPU vertex buffer with updated data. Expanding the GPU buffer if needed.
-    pub fn load_vec_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// Load the GPU buffer with updated data, expanding it if needed.
+    /// Returns `true` if the GPU buffer was reallocated, which invalidates
+    /// any bind group referencing it.
+    pub fn load_vec_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
         if self.buffer.size() < self.data_len() {
             self.buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(self.label),
                 contents: bytemuck::cast_slice(self.data.as_slice()),
                 usage: self.buffer.usage(),
             });
+            true
         } else {
             queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(self.data.as_slice()));
+            false
         }
     }
 }
@@ -204,6 +200,8 @@ pub(crate) struct CompositorBuffers {
     layer_cull: Vec<LayerCull>,
     /// The GPU chunk/silo buffers need to be rebuilt from `source_chunks`.
     chunks_dirty: bool,
+    /// A storage buffer was reallocated since the last `take_reallocated`.
+    reallocated: bool,
 }
 
 /// The parts of a layer that decide which of its chunks get uploaded.
@@ -257,6 +255,7 @@ impl CompositorBuffers {
             source_chunks: Vec::new(),
             layer_cull: Vec::new(),
             chunks_dirty: false,
+            reallocated: false,
             device: device.clone(),
             queue: queue.clone(),
         }
@@ -288,7 +287,7 @@ impl CompositorBuffers {
             });
         }
 
-        self.layers.load_vec_buffer(&self.device, &self.queue);
+        self.reallocated |= self.layers.load_vec_buffer(&self.device, &self.queue);
 
         if layer_cull != self.layer_cull {
             self.layer_cull = layer_cull;
@@ -373,7 +372,13 @@ impl CompositorBuffers {
             chunks.push(ChunkData::default());
         }
 
-        self.chunks.load_vec_buffer(&self.device, &self.queue);
-        self.silos.load_vec_buffer(&self.device, &self.queue);
+        self.reallocated |= self.chunks.load_vec_buffer(&self.device, &self.queue);
+        self.reallocated |= self.silos.load_vec_buffer(&self.device, &self.queue);
+    }
+
+    /// Whether any buffer bound in the blending bind group was reallocated
+    /// since the last call.
+    pub(crate) fn take_reallocated(&mut self) -> bool {
+        std::mem::take(&mut self.reallocated)
     }
 }
