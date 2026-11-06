@@ -129,15 +129,6 @@ fn saturation(b: vec3f, s: vec3f) -> vec3f {
     return set_lum(set_sat(b.rgb, sat(s.rgb)), lum(b.rgb));
 }
 
-// Utilities ///////////////////////////////////////////////////////////////////
-fn comp(c: vec3f, a: f32) -> vec3f {
-    return c * (1.0 - a);
-}
-
-fn stdalpha(b: f32, f: f32) -> f32 {
-    return b + f - b * f;
-}
-
 // RGB Blending Modes //////////////////////////////////////////////////////////
 // [PDF Blend Modes: Addendum]
 // [https://photoblogstop.com/photoshop/photoshop-blend-modes-explained]
@@ -269,39 +260,35 @@ fn darker_color(b: vec3f, s: vec3f) -> vec3f {
 // Fragment shader /////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-struct AtlasData {
-    cols: u32,
-    rows: u32
-}
-
 struct LayerData {
     opacity: f32,
     blend: u32,
     flags: u32,
 };
 
-
 const LayerFlags_CLIPPED: u32 = 1;
-const LayerFlags_HIDDEN: u32 = 1 << 1;
-const LayerFlags_MASK_HIDDEN: u32 = 1 << 2;
 
 fn layer_clipped(flags: u32) -> bool {
     return (flags & LayerFlags_CLIPPED) != 0;
 }
 
-fn layer_hidden(flags: u32) -> bool {
-    return (flags & LayerFlags_HIDDEN) != 0;
-}
+// Location of a tile in the atlas, resolved on the CPU.
+struct AtlasRef {
+    // Texel origin packed as x | y << 16.
+    origin: u32,
+    layer: u32,
+};
 
-fn layer_mask_hidden(flags: u32) -> bool {
-    return (flags & LayerFlags_MASK_HIDDEN) != 0;
-}
+// Hidden layers, hidden masks and clipped chunks without a base are culled on
+// the CPU, so every chunk here contributes and HAS_MASK means "apply the mask".
+const ChunkFlags_HAS_MASK: u32 = 1;
 
 struct ChunkData {
-    atlas_index: u32,
-    clip_atlas_index: u32,
-    mask_atlas_index: u32,
+    color: AtlasRef,
+    mask: AtlasRef,
+    clip: AtlasRef,
     layer_index: u32,
+    flags: u32,
 };
 
 struct SiloData {
@@ -310,104 +297,100 @@ struct SiloData {
 }
 
 @group(1) @binding(0)
-var splr: sampler;
-@group(2) @binding(0)
-var<uniform> atlas: AtlasData;
-@group(2) @binding(1)
 var atlas_texture: texture_2d_array<f32>;
-@group(2) @binding(2)
+@group(1) @binding(1)
 var<storage, read> chunks: array<ChunkData>;
-@group(2) @binding(3)
+@group(1) @binding(2)
 var<storage, read> layers: array<LayerData>;
-@group(2) @binding(4)
+@group(1) @binding(3)
 var<storage, read> silos: array<SiloData>;
-@group(2) @binding(5)
+@group(1) @binding(4)
 var<uniform> bg_in: vec4f;
 
-// Blend alpha straight colors
-fn premultiplied_blend(bg: vec4f, fg: vec4f, cg: vec4f) -> vec4f {
-    return saturate(vec4(
-        cg.rgb * cg.a * bg.a + comp(fg.rgb, bg.a) + comp(bg.rgb, cg.a),
-        stdalpha(bg.a, cg.a)
-    ));
+fn load_atlas(tile: AtlasRef, px: vec2u) -> vec4f {
+    let origin = vec2u(tile.origin & 0xFFFFu, tile.origin >> 16u);
+    return textureLoad(atlas_texture, origin + px, tile.layer, 0);
 }
 
-fn atlas_coords(atlas_coords: u32) -> vec3u {
-    return vec3u(
-        atlas_coords % atlas.cols,
-        atlas_coords / atlas.cols % atlas.rows,
-        atlas_coords / (atlas.cols * atlas.rows)
-    );
-}
-
-fn sample_atlas_texture(atlas_index: u32, coords: vec2f) -> vec4f {
-    let a_grid = vec2f(f32(atlas.cols), f32(atlas.rows));
-    let a_coords = atlas_coords(atlas_index);
-    let uv = (vec2f(a_coords.xy) + coords) / a_grid;
-    return textureSampleLevel(atlas_texture, splr, uv, a_coords.z, 0);
-}
-
-fn to_premultiplied(c: vec4f) -> vec3f {
+// Premultiplied -> straight color.
+fn unpremultiply(c: vec4f) -> vec3f {
     return select(saturate(c.rgb / c.a), vec3f(0.0), c.a == 0.0);
+}
+
+// Blend straight colors according to the layer's mode.
+fn blend_rgb(mode: u32, b: vec3f, s: vec3f) -> vec3f {
+    switch (mode) {
+        case 1u: { return multiply(b, s); }
+        case 2u: { return screen(b, s); }
+        case 3u: { return add(b, s); }
+        case 4u: { return lighten(b, s); }
+        case 5u: { return exclusion(b, s); }
+        case 6u: { return difference(b, s); }
+        case 7u: { return subtract(b, s); }
+        case 8u: { return linear_burn(b, s); }
+        case 9u: { return color_dodge(b, s); }
+        case 10u: { return color_burn(b, s); }
+        case 11u: { return overlay(b, s); }
+        case 12u: { return hard_light(b, s); }
+        case 13u: { return color(b, s); }
+        case 14u: { return luminosity(b, s); }
+        case 15u: { return hue(b, s); }
+        case 16u: { return saturation(b, s); }
+        case 17u: { return soft_light(b, s); }
+        case 19u: { return darken(b, s); }
+        case 20u: { return hard_mix(b, s); }
+        case 21u: { return vivid_light(b, s); }
+        case 22u: { return linear_light(b, s); }
+        case 23u: { return pin_light(b, s); }
+        case 24u: { return lighter_color(b, s); }
+        case 25u: { return darker_color(b, s); }
+        case 26u: { return divide(b, s); }
+        default: { return normal(b, s); }
+    }
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    var bga = bg_in;
+    // Accumulated premultiplied color.
+    var dst = bg_in;
 
-    let silo_index = silos[in.silo_index];
+    let silo = silos[in.silo_index];
+    let px = min(vec2u(in.coords * f32(canvas.tile_size)), vec2u(canvas.tile_size - 1u));
 
-    for (var i: u32 = silo_index.start; i < silo_index.end; i++) {
+    for (var i: u32 = silo.start; i < silo.end; i++) {
+        // `chunk` and `layer` are the same for every pixel in the tile, so
+        // branches on them don't diverge.
         let chunk = chunks[i];
-
         let layer = layers[chunk.layer_index];
 
-        if (layer_hidden(layer.flags)) {
+        // Premultiplied layer color.
+        var fg = load_atlas(chunk.color, px);
+        if (fg.a == 0.0) {
+            continue;
+        }
+        if (layer_clipped(layer.flags)) {
+            fg *= load_atlas(chunk.clip, px).a;
+        }
+        if ((chunk.flags & ChunkFlags_HAS_MASK) != 0u) {
+            fg *= load_atlas(chunk.mask, px).a;
+        }
+
+        // Premultiplied source with layer opacity applied.
+        let src = fg * layer.opacity;
+
+        if (layer.blend == 0u) {
+            // Normal: plain premultiplied "over".
+            dst = src + dst * (1.0 - src.a);
             continue;
         }
 
-        var clipa = select(1.0, sample_atlas_texture(chunk.clip_atlas_index, in.coords).a, layer_clipped(layer.flags));
-        let maska = select(sample_atlas_texture(chunk.mask_atlas_index, in.coords).a, 1.0, chunk.mask_atlas_index == 0 || layer_mask_hidden(layer.flags));
-        var fga = sample_atlas_texture(chunk.atlas_index, in.coords) * clipa * maska;
-
-        var bg = vec4(to_premultiplied(bga), bga.a);
-        var fg = vec4(to_premultiplied(fga), fga.a * layer.opacity);
-
-        // Blend straight colors according to modes
-        var final_pixel = vec3(0.0);
-        switch (layer.blend) {
-            case 1u: { final_pixel = multiply(bg.rgb, fg.rgb); }
-            case 2u: { final_pixel = screen(bg.rgb, fg.rgb); }
-            case 3u: { final_pixel = add(bg.rgb, fg.rgb); }
-            case 4u: { final_pixel = lighten(bg.rgb, fg.rgb); }
-            case 5u: { final_pixel = exclusion(bg.rgb, fg.rgb); }
-            case 6u: { final_pixel = difference(bg.rgb, fg.rgb); }
-            case 7u: { final_pixel = subtract(bg.rgb, fg.rgb); }
-            case 8u: { final_pixel = linear_burn(bg.rgb, fg.rgb); }
-            case 9u: { final_pixel = color_dodge(bg.rgb, fg.rgb); }
-            case 10u: { final_pixel = color_burn(bg.rgb, fg.rgb); }
-            case 11u: { final_pixel = overlay(bg.rgb, fg.rgb); }
-            case 12u: { final_pixel = hard_light(bg.rgb, fg.rgb); }
-            case 13u: { final_pixel = color(bg.rgb, fg.rgb); }
-            case 14u: { final_pixel = luminosity(bg.rgb, fg.rgb); }
-            case 15u: { final_pixel = hue(bg.rgb, fg.rgb); }
-            case 16u: { final_pixel = saturation(bg.rgb, fg.rgb); }
-            case 17u: { final_pixel = soft_light(bg.rgb, fg.rgb); }
-            case 19u: { final_pixel = darken(bg.rgb, fg.rgb); }
-            case 20u: { final_pixel = hard_mix(bg.rgb, fg.rgb); }
-            case 21u: { final_pixel = vivid_light(bg.rgb, fg.rgb); }
-            case 22u: { final_pixel = linear_light(bg.rgb, fg.rgb); }
-            case 23u: { final_pixel = pin_light(bg.rgb, fg.rgb); }
-            case 24u: { final_pixel = lighter_color(bg.rgb, fg.rgb); }
-            case 25u: { final_pixel = darker_color(bg.rgb, fg.rgb); }
-            case 26u: { final_pixel = divide(bg.rgb, fg.rgb); }
-            default: { final_pixel = normal(bg.rgb, fg.rgb); }
-        }
-        // Clamp to avoid unwanted behavior down the road
-        final_pixel = saturate(final_pixel);
-
-        // Compute final premultiplied colors
-        bga = premultiplied_blend(bga, fga, vec4(final_pixel, fg.a));
+        // Separable blend (PDF spec) in premultiplied form:
+        //   Cs'(1 - ab) + Cb'(1 - as) + as * ab * B(cb, cs)
+        let mixed = saturate(blend_rgb(layer.blend, unpremultiply(dst), unpremultiply(fg)));
+        dst = saturate(vec4(
+            src.rgb * (1.0 - dst.a) + dst.rgb * (1.0 - src.a) + src.a * dst.a * mixed,
+            src.a + dst.a - src.a * dst.a
+        ));
     }
-    return bga;
+    return dst;
 }

@@ -1,9 +1,21 @@
 #[derive(Clone)]
 pub struct Pipeline {
-    pub sampler_bind_group: wgpu::BindGroup,
     pub blending_bind_group_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
     pub canvas_bind_group_layout: wgpu::BindGroupLayout,
+}
+
+fn buffer_entry(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
 }
 
 impl Pipeline {
@@ -13,62 +25,20 @@ impl Pipeline {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("canvas_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ..buffer_entry(0, wgpu::BufferBindingType::Uniform)
                 }],
             });
-
-        // This bind group only binds the sampler, which is a constant
-        // through out all rendering passes.
-        let (sampler_bind_group_layout, sampler_bind_group) = {
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                    count: None,
-                }],
-            });
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("constant_bind_group"),
-                layout: &layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                }],
-            });
-
-            (layout, bind_group)
-        };
 
         // This bind group changes per composition run.
+        let storage = wgpu::BufferBindingType::Storage { read_only: true };
         let blending_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("blending_group_layout"),
                 entries: &[
-                    // atlas
+                    // atlas texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // textures
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
@@ -78,49 +48,13 @@ impl Pipeline {
                         count: None,
                     },
                     // chunks
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    buffer_entry(1, storage),
                     // layers
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    buffer_entry(2, storage),
                     // silos
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    buffer_entry(3, storage),
                     // background color
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
+                    buffer_entry(4, wgpu::BufferBindingType::Uniform),
                 ],
             });
 
@@ -133,7 +67,6 @@ impl Pipeline {
                     label: Some("render_pipeline_layout"),
                     bind_group_layouts: &[
                         Some(&canvas_bind_group_layout),
-                        Some(&sampler_bind_group_layout),
                         Some(&blending_bind_group_layout),
                     ],
                     immediate_size: 0,
@@ -176,7 +109,6 @@ impl Pipeline {
 
         Self {
             canvas_bind_group_layout,
-            sampler_bind_group,
             blending_bind_group_layout,
             render_pipeline,
         }

@@ -1,9 +1,11 @@
+use std::num::NonZeroU32;
+
 use wgpu::util::DeviceExt;
 
 use crate::{
     ChunkTile, CompositeLayer,
     canvas::{
-        ChunkData, ChunkSilo, CompositorAtlasTiling, CompositorCanvasTiling, LayerData,
+        ChunkData, ChunkFlags, ChunkSilo, CompositorAtlasTiling, CompositorCanvasTiling, LayerData,
         LayerFlags,
     },
 };
@@ -188,12 +190,29 @@ pub(crate) struct CompositorBuffers {
     queue: wgpu::Queue,
 
     pub(crate) background: DataBuffer<[f32; 4]>,
-    pub(crate) atlas: DataBuffer<CompositorAtlasTiling>,
+    pub(crate) atlas: CompositorAtlasTiling,
 
     pub(crate) canvas: DataBuffer<CompositorCanvasTiling>,
     pub(crate) silos: DataBuffer<Vec<ChunkSilo>>,
     pub(crate) chunks: DataBuffer<Vec<ChunkData>>,
     pub(crate) layers: DataBuffer<Vec<LayerData>>,
+
+    /// Every chunk of the document with its silo index, in draw order.
+    /// The GPU chunk buffer is the subset of these that can contribute.
+    source_chunks: Vec<(u32, ChunkData)>,
+    /// Per-layer culling state the GPU chunk buffer was last built against.
+    layer_cull: Vec<LayerCull>,
+    /// The GPU chunk/silo buffers need to be rebuilt from `source_chunks`.
+    chunks_dirty: bool,
+}
+
+/// The parts of a layer that decide which of its chunks get uploaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LayerCull {
+    /// Layer is visible and not fully transparent.
+    drawn: bool,
+    clipped: bool,
+    mask_visible: bool,
 }
 
 impl CompositorBuffers {
@@ -210,12 +229,7 @@ impl CompositorBuffers {
                 [0.0; 4],
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             ),
-            atlas: DataBuffer::init(
-                device,
-                "atlas_buffer",
-                atlas_data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            ),
+            atlas: atlas_data,
             layers: DataBuffer::init_vec(
                 device,
                 "layer_buffer",
@@ -240,77 +254,123 @@ impl CompositorBuffers {
                 canvas_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             ),
+            source_chunks: Vec::new(),
+            layer_cull: Vec::new(),
+            chunks_dirty: false,
             device: device.clone(),
             queue: queue.clone(),
         }
     }
 
+    /// Nothing to composite at all.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.source_chunks.is_empty() || self.layers.data().is_empty()
+    }
+
     pub(super) fn load_layer_buffer(&mut self, composite_layers: &[CompositeLayer]) {
         let layers = self.layers.data_mut();
         layers.clear();
+        let mut layer_cull = Vec::with_capacity(composite_layers.len());
 
         for layer in composite_layers.iter() {
-            let flags = {
-                let mut flags = LayerFlags::empty();
-                LayerFlags::empty();
-                if layer.clipped {
-                    flags |= LayerFlags::CLIPPED;
-                }
-                if layer.hidden {
-                    flags |= LayerFlags::HIDDEN;
-                }
-                if layer.mask_hidden {
-                    flags |= LayerFlags::MASK_HIDDEN;
-                }
-                flags
-            };
+            let mut flags = LayerFlags::empty();
+            flags.set(LayerFlags::CLIPPED, layer.clipped);
 
             layers.push(LayerData {
                 blend: layer.blend.to_u32(),
                 opacity: layer.opacity,
                 flags: flags.bits(),
             });
+            layer_cull.push(LayerCull {
+                drawn: !layer.hidden && layer.opacity > 0.0,
+                clipped: layer.clipped,
+                mask_visible: !layer.mask_hidden,
+            });
         }
 
         self.layers.load_vec_buffer(&self.device, &self.queue);
+
+        if layer_cull != self.layer_cull {
+            self.layer_cull = layer_cull;
+            self.chunks_dirty = true;
+        }
     }
 
     pub(super) fn load_chunk_buffer(&mut self, chunks_data: &[ChunkTile]) {
         debug_assert!(chunks_data.is_sorted_by_key(|v| (v.col, v.row)));
 
         let num_cols = self.canvas.data().cols();
-        let num_rows = self.canvas.data().rows();
+        let tile_size = self.canvas.data().tile_size();
+        let atlas = self.atlas;
+        let resolve = |index: Option<NonZeroU32>| index.map(|i| atlas.texel_ref(i.get(), tile_size));
+
+        self.source_chunks.clear();
+        self.source_chunks.extend(chunks_data.iter().map(|chunk| {
+            let mask = resolve(chunk.mask_atlas_index);
+            let clip = resolve(chunk.clip_atlas_index);
+            let mut flags = ChunkFlags::empty();
+            flags.set(ChunkFlags::HAS_MASK, mask.is_some());
+            flags.set(ChunkFlags::HAS_CLIP, clip.is_some());
+            let data = ChunkData {
+                color: atlas.texel_ref(chunk.atlas_index.get(), tile_size),
+                mask: mask.unwrap_or_default(),
+                clip: clip.unwrap_or_default(),
+                layer_index: chunk.layer_index,
+                flags: flags.bits(),
+            };
+            (chunk.row * num_cols + chunk.col, data)
+        }));
+
+        self.chunks_dirty = true;
+    }
+
+    /// Rebuild the GPU chunk and silo buffers if the chunks or the layer
+    /// culling state changed since the last upload.
+    pub(crate) fn upload_chunks(&mut self) {
+        if !std::mem::take(&mut self.chunks_dirty) {
+            return;
+        }
+
+        let num_silos = (self.canvas.data().cols() * self.canvas.data().rows()) as usize;
+
+        let silos = self.silos.data_mut();
+        silos.clear();
+        silos.resize(num_silos, ChunkSilo { start: 0, end: 0 });
 
         let chunks = self.chunks.data_mut();
         chunks.clear();
 
-        let silos = self.silos.data_mut();
-        silos.resize(
-            (num_cols * num_rows) as usize,
-            ChunkSilo { start: 0, end: 0 },
-        );
-        for silo in silos.iter_mut() {
-            *silo = ChunkSilo { start: 0, end: 0 };
+        for &(silo_index, mut chunk) in &self.source_chunks {
+            let Some(layer) = self.layer_cull.get(chunk.layer_index as usize) else {
+                continue;
+            };
+            if !layer.drawn {
+                continue;
+            }
+            let mut flags = ChunkFlags::from_bits_retain(chunk.flags);
+            // Clipped onto a base layer that has no pixels in this tile.
+            if layer.clipped && !flags.contains(ChunkFlags::HAS_CLIP) {
+                continue;
+            }
+            if !layer.mask_visible {
+                flags.remove(ChunkFlags::HAS_MASK);
+            }
+            chunk.flags = flags.bits();
+
+            // `source_chunks` is grouped by silo, so each silo's chunks are
+            // contiguous.
+            let silo = &mut silos[silo_index as usize];
+            if silo.start == silo.end {
+                silo.start = chunks.len() as u32;
+            }
+            chunks.push(chunk);
+            silo.end = chunks.len() as u32;
         }
 
-        // Create a mutable list of silo references by index for fast access
-        for chunk in chunks_data {
-            let index = (chunk.row * num_cols + chunk.col) as usize;
-            let start = chunks.len();
-            chunks.push(ChunkData {
-                atlas_index: chunk.atlas_index.get(),
-                mask_atlas_index: chunk.mask_atlas_index.map(|v| v.get()).unwrap_or(0),
-                clip_atlas_index: chunk.clip_atlas_index.map(|v| v.get()).unwrap_or(0),
-                layer_index: chunk.layer_index,
-            });
-
-            let silo = &mut silos[index];
-
-            if silo.start == 0 && silo.end == 0 {
-                // First time seeing this (col, row)
-                silo.start = start as u32;
-            }
-            silo.end = chunks.len() as u32; // always update end to current
+        // Storage bindings can't be empty. Every silo is empty in this case,
+        // so the placeholder is never read.
+        if chunks.is_empty() {
+            chunks.push(ChunkData::default());
         }
 
         self.chunks.load_vec_buffer(&self.device, &self.queue);

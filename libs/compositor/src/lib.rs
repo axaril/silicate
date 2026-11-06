@@ -93,14 +93,13 @@ impl Compositor {
     }
 
     /// Render composite layers using the compositor pipeline.
-    pub fn render(&self, pipeline: &Pipeline, output_view: TextureView) {
-        if self.buffers.chunks.data().is_empty()
-            || self.buffers.layers.data().is_empty()
-            || self.buffers.silos.data().is_empty()
-        {
+    pub fn render(&mut self, pipeline: &Pipeline, output_view: TextureView) {
+        if self.buffers.is_empty() {
             // No layers to composite, skip rendering.
             return;
         }
+
+        self.buffers.upload_chunks();
 
         self.queue.submit([{
             let mut encoder = self
@@ -134,28 +133,24 @@ impl Compositor {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffers.atlas.buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: wgpu::BindingResource::TextureView(
                         &self.atlas_texture.create_array_view(),
                     ),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: self.buffers.chunks.as_binding_resource(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: self.buffers.layers.as_binding_resource(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: self.buffers.silos.as_binding_resource(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: self.buffers.background.buffer().as_entire_binding(),
                 },
             ],
@@ -182,8 +177,7 @@ impl Compositor {
         // Finish and set the render pass's binding groups and data
         pass.set_pipeline(&pipeline.render_pipeline);
         pass.set_bind_group(0, &canvas_bind_group, &[]);
-        pass.set_bind_group(1, &pipeline.sampler_bind_group, &[]);
-        pass.set_bind_group(2, &blending_bind_group, &[]);
+        pass.set_bind_group(1, &blending_bind_group, &[]);
         // One 4-vertex triangle strip per canvas tile; the shader derives the
         // quad corners and tile position from the vertex/instance indices.
         let canvas = self.buffers.canvas.data();
