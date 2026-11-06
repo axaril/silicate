@@ -17,6 +17,9 @@ pub struct CompositorApp {
     id: InstanceKey,
     flat_layers: Vec<CompositeLayer>,
     flat_chunks: Vec<ChunkTile>,
+    /// Each layer's `clipped` flag when the chunks were last flattened.
+    /// Clipping bases are baked into the chunks, so a change requires a reload.
+    clip_flags: Vec<bool>,
 }
 
 pub struct CompositorHandle {
@@ -48,6 +51,9 @@ impl CompositorApp {
             composite_layers: &mut Vec<CompositeLayer>,
             override_hidden: bool,
         ) {
+            // Whether a clipping base exists below the current layer. Must
+            // follow the same rules as `flatten_chunks`.
+            let mut has_base = false;
             for layer in layers.iter().rev() {
                 match layer {
                     SilicaHierarchy::Group(group) => {
@@ -56,12 +62,18 @@ impl CompositorApp {
                             composite_layers,
                             group.hidden | override_hidden,
                         );
+                        has_base = false;
                     }
                     SilicaHierarchy::Layer(layer) => {
+                        if !layer.clipped {
+                            has_base = true;
+                        }
                         composite_layers.push(CompositeLayer {
                             opacity: layer.opacity,
                             blend: super::blend::convert_blend(layer.blend),
-                            clipped: layer.clipped,
+                            // A clipped layer with nothing to clip to is drawn
+                            // as a normal layer.
+                            clipped: layer.clipped && has_base,
                             hidden: layer.hidden | override_hidden,
                             mask_hidden: layer.mask.as_ref().map_or(true, |mask| mask.hidden),
                         });
@@ -73,6 +85,15 @@ impl CompositorApp {
         inner(layers, composite_layers, false);
     }
 
+    fn collect_clip_flags(flags: &mut Vec<bool>, layers: &[SilicaHierarchy]) {
+        for layer in layers {
+            match layer {
+                SilicaHierarchy::Group(group) => Self::collect_clip_flags(flags, &group.children),
+                SilicaHierarchy::Layer(layer) => flags.push(layer.clipped),
+            }
+        }
+    }
+
     fn flatten_chunks(
         composite_layers: &mut Vec<ChunkTile>,
         layers: &[SilicaHierarchy],
@@ -82,21 +103,26 @@ impl CompositorApp {
 
         let mut layer_counter = 0;
 
-        fn inner<'a>(
-            layers: &'a [SilicaHierarchy],
+        fn inner(
+            layers: &[SilicaHierarchy],
             chunks: &mut Vec<ChunkTile>,
-            clip_layer: &mut Option<&'a SilicaLayer>,
             layer_counter: &mut u32,
             render_masks: bool,
         ) {
+            // Clipping base for clipped layers: the nearest non-clipped layer
+            // below, within the same group. Clipping doesn't reach across
+            // group boundaries in either direction.
+            let mut base: Option<&SilicaLayer> = None;
             for layer in layers.iter().rev() {
                 match layer {
                     SilicaHierarchy::Group(group) => {
-                        inner(&group.children, chunks, clip_layer, layer_counter, true);
+                        inner(&group.children, chunks, layer_counter, true);
+                        base = None;
                     }
                     SilicaHierarchy::Layer(layer) => {
+                        let clip_base = if layer.clipped { base } else { None };
                         for chunk in layer.image.chunks.iter() {
-                            let clip_atlas_index = clip_layer.as_ref().and_then(|clip_layer| {
+                            let clip_atlas_index = clip_base.and_then(|clip_layer| {
                                 clip_layer
                                     .image
                                     .chunks
@@ -131,20 +157,16 @@ impl CompositorApp {
                                 layer_index: *layer_counter,
                             });
                         }
-                        *clip_layer = Some(layer);
+                        if !layer.clipped {
+                            base = Some(layer);
+                        }
                         *layer_counter += 1;
                     }
                 }
             }
         }
 
-        inner(
-            layers,
-            composite_layers,
-            &mut None,
-            &mut layer_counter,
-            render_masks,
-        );
+        inner(layers, composite_layers, &mut layer_counter, render_masks);
     }
 
     pub fn generate_layers_preview(
@@ -210,6 +232,7 @@ impl CompositorApp {
             pipeline,
             flat_layers: Vec::new(),
             flat_chunks: Vec::new(),
+            clip_flags: Vec::new(),
         };
 
         let handle = CompositorHandle {
@@ -255,9 +278,16 @@ impl CompositorApp {
 
         let background = (!file.background_hidden).then_some(file.background_color);
 
-        let reload_chunks = self
+        let mut reload_chunks = self
             .needs_to_load_chunks
             .fetch_and(false, std::sync::atomic::Ordering::AcqRel);
+
+        let mut clip_flags = Vec::with_capacity(self.clip_flags.len());
+        Self::collect_clip_flags(&mut clip_flags, &layers);
+        if clip_flags != self.clip_flags {
+            self.clip_flags = clip_flags;
+            reload_chunks = true;
+        }
 
         if reload_chunks {
             Self::flatten_chunks(&mut self.flat_chunks, &layers, true);
