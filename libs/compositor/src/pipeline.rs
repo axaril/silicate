@@ -1,5 +1,3 @@
-use crate::{ChunkInstance, VertexInput};
-
 #[derive(Clone)]
 pub struct Pipeline {
     pub sampler_bind_group: wgpu::BindGroup,
@@ -149,7 +147,7 @@ impl Pipeline {
                     module: &shader,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     entry_point: Some("vs_main"),
-                    buffers: &[Some(VertexInput::desc()), Some(ChunkInstance::desc())],
+                    buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
@@ -163,7 +161,7 @@ impl Pipeline {
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    strip_index_format: Some(wgpu::IndexFormat::Uint16),
+                    strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: None,
                     polygon_mode: wgpu::PolygonMode::Fill,

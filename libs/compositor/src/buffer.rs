@@ -3,8 +3,8 @@ use wgpu::util::DeviceExt;
 use crate::{
     ChunkTile, CompositeLayer,
     canvas::{
-        ChunkData, ChunkInstance, ChunkSilo, CompositorAtlasTiling, CompositorCanvasTiling,
-        LayerData, LayerFlags, VertexInput,
+        ChunkData, ChunkSilo, CompositorAtlasTiling, CompositorCanvasTiling, LayerData,
+        LayerFlags,
     },
 };
 
@@ -153,10 +153,6 @@ where
             queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(self.data.as_slice()));
         }
     }
-
-    pub fn buffer_slice(&self) -> wgpu::BufferSlice<'_> {
-        self.buffer.slice(..self.data_len())
-    }
 }
 
 impl<T> DataBuffer<T>
@@ -191,9 +187,6 @@ pub(crate) struct CompositorBuffers {
     device: wgpu::Device,
     queue: wgpu::Queue,
 
-    pub(crate) vertices: DataBuffer<[VertexInput; 4]>,
-    pub(crate) indices: DataBuffer<[u16; 4]>,
-
     pub(crate) background: DataBuffer<[f32; 4]>,
     pub(crate) atlas: DataBuffer<CompositorAtlasTiling>,
 
@@ -201,37 +194,9 @@ pub(crate) struct CompositorBuffers {
     pub(crate) silos: DataBuffer<Vec<ChunkSilo>>,
     pub(crate) chunks: DataBuffer<Vec<ChunkData>>,
     pub(crate) layers: DataBuffer<Vec<LayerData>>,
-    pub(crate) tiles: DataBuffer<Vec<ChunkInstance>>,
 }
 
 impl CompositorBuffers {
-    /// Initial vertices
-    const SQUARE_VERTICES: [VertexInput; 4] = [
-        VertexInput {
-            // top left
-            position: [0.0, 1.0],
-            coords: [0.0, 1.0],
-        },
-        VertexInput {
-            // bottom left
-            position: [0.0, 0.0],
-            coords: [0.0, 0.0],
-        },
-        VertexInput {
-            // top right
-            position: [1.0, 1.0],
-            coords: [1.0, 1.0],
-        },
-        VertexInput {
-            // bottom right
-            position: [1.0, 0.0],
-            coords: [1.0, 0.0],
-        },
-    ];
-
-    /// Initial indices of the 2 triangle strips
-    const INDICES: [u16; 4] = [0, 2, 1, 3];
-
     pub(super) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -239,18 +204,6 @@ impl CompositorBuffers {
         atlas_data: CompositorAtlasTiling,
     ) -> Self {
         Self {
-            vertices: DataBuffer::init(
-                device,
-                "vertex_buffer",
-                Self::SQUARE_VERTICES,
-                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            ),
-            indices: DataBuffer::init(
-                device,
-                "index_buffer",
-                Self::INDICES,
-                wgpu::BufferUsages::INDEX,
-            ),
             background: DataBuffer::init(
                 device,
                 "background",
@@ -286,16 +239,6 @@ impl CompositorBuffers {
                 "canvas_buffer",
                 canvas_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            ),
-            tiles: DataBuffer::init_vec(
-                device,
-                "tile_buffer",
-                (0..canvas_data.rows())
-                    .flat_map(|row| {
-                        (0..canvas_data.cols()).map(move |col| ChunkInstance::new(col, row))
-                    })
-                    .collect::<Vec<_>>(),
-                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             ),
             device: device.clone(),
             queue: queue.clone(),

@@ -8,8 +8,8 @@ pub mod canvas;
 use std::num::NonZeroU32;
 
 use blend::BlendingMode;
-use buffer::{BufferDimensions, CompositorBuffers};
-use canvas::{ChunkInstance, CompositorAtlasTiling, CompositorCanvasTiling, VertexInput};
+use buffer::CompositorBuffers;
+use canvas::{CompositorAtlasTiling, CompositorCanvasTiling};
 use pipeline::Pipeline;
 use wgpu::{CommandEncoder, TextureView};
 
@@ -181,16 +181,9 @@ impl Compositor {
         pass.set_bind_group(0, &canvas_bind_group, &[]);
         pass.set_bind_group(1, &pipeline.sampler_bind_group, &[]);
         pass.set_bind_group(2, &blending_bind_group, &[]);
-        pass.set_vertex_buffer(0, self.buffers.vertices.buffer().slice(..));
-        pass.set_vertex_buffer(1, self.buffers.tiles.buffer_slice());
-        pass.set_index_buffer(
-            self.buffers.indices.buffer().slice(..),
-            wgpu::IndexFormat::Uint16,
-        );
-        pass.draw_indexed(
-            0..self.buffers.indices.data().len() as u32,
-            0,
-            0..self.buffers.tiles.data().len() as u32,
-        );
+        // One 4-vertex triangle strip per canvas tile; the shader derives the
+        // quad corners and tile position from the vertex/instance indices.
+        let canvas = self.buffers.canvas.data();
+        pass.draw(0..4, 0..canvas.cols() * canvas.rows());
     }
 }

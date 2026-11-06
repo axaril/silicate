@@ -1,7 +1,8 @@
 // Vertex shader ///////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-// Nothing special about this section. It gets fed vertices in a triangle strip
-// configuration to draw a square on the texture.
+// Draws one unit quad per canvas tile. The quad corners are generated from the
+// vertex index (4-vertex triangle strip) and the tile from the instance index,
+// so no vertex, index or instance buffers are needed.
 
 struct CanvasTiling {
     height: u32,
@@ -15,16 +16,6 @@ struct CanvasTiling {
 @group(0) @binding(0)
 var<uniform> canvas: CanvasTiling;
 
-struct VertexInput {
-    @location(0) position: vec2f,
-    @location(1) coords: vec2f,
-};
-
-struct TileInstance {
-    @location(2) col: u32,
-    @location(3) row: u32
-}
-
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) coords: vec2f,
@@ -33,10 +24,17 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(
-    model: VertexInput,
-    tile: TileInstance
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
-    let tile_coords = vec2f(f32(tile.col), f32(tile.row));
+    // Strip order: (0,1), (1,1), (0,0), (1,0)
+    let corner = vec2f(f32(vertex_index & 1u), f32(1u - (vertex_index >> 1u)));
+
+    // Instances are laid out row-major, matching the silo layout.
+    let col = instance_index % canvas.cols;
+    let row = instance_index / canvas.cols;
+
+    let tile_coords = vec2f(f32(col), f32(row));
     let canvas_grid = vec2f(f32(canvas.cols), f32(canvas.rows));
     let canvas_dim = vec2f(f32(canvas.width), f32(canvas.height));
 
@@ -44,13 +42,13 @@ fn vs_main(
     let flipped_vertically = (canvas.flipped & 1) != 0;
 
     let scale = canvas_grid * f32(canvas.tile_size) / canvas_dim;
-    let pos = (model.position + tile_coords) / canvas_grid;
+    let pos = (corner + tile_coords) / canvas_grid;
     let normalized_pos = select(pos * scale, 1.0 - pos * scale, vec2(flipped_horizontally, flipped_vertically)) * 2.0 - 1.0;
 
     var out: VertexOutput;
     out.position = vec4(normalized_pos, 0.0, 1.0);
-    out.coords = model.coords;
-    out.silo_index = tile.row * canvas.cols + tile.col;
+    out.coords = corner;
+    out.silo_index = instance_index;
     return out;
 }
 
