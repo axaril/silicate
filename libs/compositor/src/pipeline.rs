@@ -155,7 +155,7 @@ impl Pipeline {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: crate::tex::TEX_FORMAT,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),

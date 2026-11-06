@@ -42,8 +42,12 @@ impl CompositorCanvasTiling {
         self.rows
     }
 
-    pub fn set_flipped(&mut self, horizontally: bool, vertically: bool) {
-        self.flipped = u32::from(horizontally) << 1 | u32::from(vertically);
+    /// Set the flip state. Returns `true` if it changed.
+    pub fn set_flipped(&mut self, horizontally: bool, vertically: bool) -> bool {
+        let flipped = u32::from(horizontally) << 1 | u32::from(vertically);
+        let changed = self.flipped != flipped;
+        self.flipped = flipped;
+        changed
     }
 }
 

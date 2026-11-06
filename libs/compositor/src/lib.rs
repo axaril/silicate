@@ -74,11 +74,14 @@ impl Compositor {
     }
 
     pub fn set_flipped(&mut self, horizontally: bool, vertically: bool) {
-        self.buffers
+        if self
+            .buffers
             .canvas
             .data_mut()
-            .set_flipped(horizontally, vertically);
-        self.buffers.canvas.load_buffer(&self.queue);
+            .set_flipped(horizontally, vertically)
+        {
+            self.buffers.canvas.load_buffer(&self.queue);
+        }
     }
 
     pub fn set_background(&mut self, bg: Option<[f32; 4]>) {
