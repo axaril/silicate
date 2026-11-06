@@ -129,7 +129,7 @@ impl LayersHierarchy<'_> {
 
             let original_image_size = image.size().expect("wgpu texture have size");
             let mut image_size = original_image_size;
-            if is_upright(rotation) {
+            if !is_upright(rotation) {
                 std::mem::swap(&mut image_size.x, &mut image_size.y);
             }
 
