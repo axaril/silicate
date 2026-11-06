@@ -20,7 +20,56 @@ use std::{
     time::Duration,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::{fs::OpenOptions, path::Path, path::PathBuf};
+use std::{fs::OpenOptions, path::PathBuf};
+
+/// Where a file to load comes from.
+pub enum FileSource {
+    /// A file on disk, memory-mapped while it decodes.
+    #[cfg(not(target_arch = "wasm32"))]
+    Path(PathBuf),
+    /// File contents already in memory, such as from a browser file picker.
+    /// Native frontends currently always have a path.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Bytes(Arc<[u8]>),
+}
+
+/// The contents of an opened [`FileSource`].
+enum FileBytes {
+    #[cfg(not(target_arch = "wasm32"))]
+    Mapped(memmap2::Mmap),
+    Owned(Arc<[u8]>),
+}
+
+impl std::ops::Deref for FileBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            FileBytes::Mapped(mapping) => mapping,
+            FileBytes::Owned(bytes) => bytes,
+        }
+    }
+}
+
+impl FileSource {
+    fn open(self) -> Result<FileBytes, SilicaError> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            FileSource::Path(path) => {
+                let file = OpenOptions::new().read(true).write(false).open(path)?;
+                // SAFETY: the mapping is only read. Another process modifying
+                // the file while it decodes could produce garbage tiles, but
+                // the decoder bounds-checks everything it reads.
+                let mapping = unsafe { memmap2::Mmap::map(&file)? };
+                Ok(FileBytes::Mapped(mapping))
+            }
+            FileSource::Bytes(bytes) => Ok(FileBytes::Owned(bytes)),
+        }
+    }
+}
+
+pub type LoadResult = Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>;
 
 pub enum AppEvent {
     NewInstance(InstanceKey, Instance, CompositorApp),
@@ -29,16 +78,12 @@ pub enum AppEvent {
     RebindPreviews(InstanceKey),
     RemoveInstance(InstanceKey),
     LoadFile {
-        #[cfg(not(target_arch = "wasm32"))]
-        path: PathBuf,
-        #[cfg(target_arch = "wasm32")]
-        bytes: Arc<[u8]>,
+        source: FileSource,
         tabs: Option<TileId>,
     },
-    /// A file finished decoding off the main thread.
-    #[cfg(target_arch = "wasm32")]
+    /// A file finished decoding off the UI thread.
     FileDecoded {
-        result: Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>,
+        result: LoadResult,
         tabs: Option<TileId>,
     },
     LoadDialog(Option<TileId>),
@@ -66,8 +111,7 @@ impl std::fmt::Debug for AppEvent {
             AppEvent::RebindPreviews(arg0) => f.debug_tuple("RebindPreviews").field(arg0).finish(),
             AppEvent::RemoveInstance(arg0) => f.debug_tuple("RemoveInstance").field(arg0).finish(),
             AppEvent::Toast(_) => f.debug_tuple("Toast").field(&"...").finish(),
-            AppEvent::LoadFile { .. } => f.debug_tuple("LoadFilePath").field(&"...").finish(),
-            #[cfg(target_arch = "wasm32")]
+            AppEvent::LoadFile { .. } => f.debug_tuple("LoadFile").field(&"...").finish(),
             AppEvent::FileDecoded { .. } => f.debug_tuple("FileDecoded").field(&"...").finish(),
             AppEvent::LoadDialog(_) => f.debug_tuple("LoadDialog").field(&"...").finish(),
             AppEvent::SaveDialog(_) => f.debug_tuple("SaveDialog").field(&"...").finish(),
@@ -97,88 +141,41 @@ impl App {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_file(&self, path: &Path) -> Result<InstanceKey, SilicaError> {
-        let file = OpenOptions::new().read(true).write(false).open(path)?;
-
-        let mapping = unsafe { memmap2::Mmap::map(&file)? };
-
-        self.load_bytes(&mapping)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_bytes(&self, bytes: &[u8]) -> Result<InstanceKey, SilicaError> {
-        log::info!("Loading file");
-
-        let (file, metadata) = tokio::task::block_in_place(|| {
-            ProcreateFile::open(bytes, &self.device, &self.queue)
-        })?;
-
-        Ok(self.create_instance(file, metadata))
-    }
-
-    /// Decode a file without blocking the browser's main thread.
+    /// Load a file without blocking the UI thread.
     ///
-    /// With the thread pool enabled, tiles are decompressed on rayon workers
-    /// and uploaded here as they arrive, since WebGPU objects can't be used
-    /// from a Web Worker. Pass the result to [`App::create_instance`].
-    #[cfg(target_arch = "wasm32")]
-    pub fn decode_bytes(
-        &self,
-        bytes: Arc<[u8]>,
-    ) -> impl Future<Output = Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>> + 'static
-    {
+    /// Tiles are decompressed on the rayon pool and uploaded by whichever
+    /// task awaits this future, as they arrive. Uploading stays off the
+    /// workers because WebGPU objects can't be used from a Web Worker, and
+    /// the bounded queue keeps decoded tiles from piling up in memory.
+    /// Pass the result to [`App::create_instance`].
+    pub fn load(&self, source: FileSource) -> impl Future<Output = LoadResult> + 'static {
         let device = self.device.clone();
         let queue = self.queue.clone();
         async move {
             log::info!("Loading file");
 
+            let bytes = source.open()?;
             let (decoder, atlas) = ProcreateFile::prepare(&bytes, &device)?;
 
-            // Without atomics, wgpu objects are `Sync` and rayon runs on this
-            // thread, so tiles can go straight to the queue.
-            #[cfg(not(target_feature = "atomics"))]
-            {
-                let file = decoder.decode(&bytes, &|tile| atlas.upload(&queue, &tile))?;
-                return Ok((file, atlas));
+            if !Self::decode_on_workers() {
+                return Self::decode_inline(decoder, &bytes, atlas, &queue);
             }
 
-            // Wasm memory never shrinks, so decoded tiles waiting for upload
-            // count towards the page's memory for its whole lifetime. With the
-            // pool running, workers block once this many tiles are queued.
+            // Workers block once this many decoded tiles are waiting. This
+            // matters most on wasm, where memory never shrinks, so any
+            // backlog counts towards the page's memory for its lifetime.
             const MAX_QUEUED_TILES: usize = 64;
 
-            #[allow(unreachable_code)]
-            let threaded = crate::web::threads_enabled();
-            let capacity = if threaded {
-                MAX_QUEUED_TILES
-            } else {
-                // The pool failed to start, so decoding runs inline before the
-                // upload loop and every tile has to fit in the queue.
-                let atlas_tiling = atlas.canvas_tiling.atlas;
-                (atlas_tiling.cols * atlas_tiling.rows * atlas_tiling.layers) as usize
-            };
-
-            let (tile_tx, mut tile_rx) = tokio::sync::mpsc::channel(capacity);
+            let (tile_tx, mut tile_rx) = tokio::sync::mpsc::channel(MAX_QUEUED_TILES);
             let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-            let decode = move || {
+            rayon::spawn(move || {
                 let result = decoder.decode(&bytes, &|tile| {
-                    let _ = if threaded {
-                        // Rayon workers are Web Workers, which may block.
-                        tile_tx.blocking_send(tile).ok()
-                    } else {
-                        tile_tx.try_send(tile).ok()
-                    };
+                    // Rayon workers may block, including Web Workers.
+                    let _ = tile_tx.blocking_send(tile);
                 });
                 let _ = done_tx.send(result);
                 // `tile_tx` drops here, ending the upload loop below.
-            };
-
-            if threaded {
-                rayon::spawn(decode);
-            } else {
-                decode();
-            }
+            });
 
             while let Some(tile) = tile_rx.recv().await {
                 atlas.upload(&queue, &tile);
@@ -187,6 +184,41 @@ impl App {
             let file = done_rx.await.expect("decoder dropped without a result")?;
             Ok((file, atlas))
         }
+    }
+
+    /// Whether the rayon pool can run decoding in the background.
+    fn decode_on_workers() -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return true;
+        #[cfg(target_arch = "wasm32")]
+        return crate::web::threads_enabled();
+    }
+
+    /// Decode on the current thread, for wasm builds without a thread pool.
+    fn decode_inline(
+        decoder: silica_gpu::ProcreateFileDecoder,
+        bytes: &[u8],
+        atlas: ProcreateFileAtlas,
+        queue: &wgpu::Queue,
+    ) -> LoadResult {
+        // Without atomics, wgpu objects are `Sync`, so tiles can go straight
+        // to the queue as they're decoded.
+        #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
+        let file = decoder.decode(bytes, &|tile| atlas.upload(queue, &tile))?;
+
+        // With atomics but no pool (it failed to start), wgpu objects can't
+        // be captured by the decoder, so every tile is held until the end.
+        #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+        let file = {
+            let tiles = std::sync::Mutex::new(Vec::new());
+            let file = decoder.decode(bytes, &|tile| tiles.lock().unwrap().push(tile))?;
+            for tile in tiles.into_inner().unwrap() {
+                atlas.upload(queue, &tile);
+            }
+            file
+        };
+
+        Ok((file, atlas))
     }
 
     pub fn create_instance(

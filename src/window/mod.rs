@@ -3,7 +3,7 @@ pub mod prefs;
 
 use crate::app::compositor::CompositorApp;
 use crate::app::instance::InstanceKey;
-use crate::app::{App, AppEvent};
+use crate::app::{App, AppEvent, FileSource};
 use crate::gui::{ViewOptions, ViewerGui};
 use crate::window::prefs::PersistedPreferences;
 use dialog::Dialog;
@@ -76,7 +76,10 @@ impl AppInstance {
     pub fn load_files(&mut self, paths: Vec<PathBuf>) {
         for path in paths {
             self.event_sender
-                .send(AppEvent::LoadFile { path, tabs: None })
+                .send(AppEvent::LoadFile {
+                    source: FileSource::Path(path),
+                    tabs: None,
+                })
                 .unwrap();
         }
     }
@@ -196,33 +199,18 @@ impl AppInstance {
             AppEvent::Toast(toast) => {
                 self.toasts.add(toast);
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            AppEvent::LoadFile { path, tabs } => match self.app.load_file(&path) {
-                Err(err) => {
-                    self.toasts
-                        .error(format!("File from drag/drop failed to load. Reason: {err}"));
-                }
-                Ok(key) => {
-                    self.toasts.success("Loaded file from drag/drop.");
-                    self.event_sender
-                        .send(AppEvent::NewView(tabs, key))
-                        .unwrap();
-                }
-            },
-            #[cfg(target_arch = "wasm32")]
-            AppEvent::LoadFile { bytes, tabs } => {
-                let decode = self.app.decode_bytes(bytes);
+            AppEvent::LoadFile { source, tabs } => {
+                let load = self.app.load(source);
                 let event_sender = self.event_sender.clone();
                 let ctx = ctx.clone();
                 rt.spawn(async move {
-                    let result = decode.await;
+                    let result = load.await;
                     event_sender
                         .send(AppEvent::FileDecoded { result, tabs })
                         .unwrap();
                     ctx.request_repaint();
                 });
             }
-            #[cfg(target_arch = "wasm32")]
             AppEvent::FileDecoded { result, tabs } => match result {
                 Err(err) => {
                     self.toasts
@@ -268,7 +256,7 @@ impl AppInstance {
                         Ok(bytes) => {
                             event_sender
                                 .send(AppEvent::LoadFile {
-                                    bytes: Arc::from(bytes),
+                                    source: FileSource::Bytes(Arc::from(bytes)),
                                     tabs: None,
                                 })
                                 .unwrap();

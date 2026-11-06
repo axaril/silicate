@@ -36,6 +36,7 @@ log = "0.4"
 
 silicate-compositor = { path = "libs/compositor" }
 silica-gpu = { path = "libs/silica-gpu" }
+rayon = "1"
 
 image = { workspace = true, features = [
     "png",
@@ -71,7 +72,6 @@ clap = { version = "4.5", features = ["cargo", "derive"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", features = ["sync", "rt"] }
-rayon = "1"
 wasm-bindgen-futures = "0.4.64"
 wasm-bindgen-rayon = { version = "1.3", features = ["no-bundler"], optional = true }
 web-sys = { version = "0.3.91", features = [

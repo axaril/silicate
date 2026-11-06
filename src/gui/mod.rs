@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, mpsc::Sender};
 
 use crate::app::{
-    App, AppEvent,
+    App, AppEvent, FileSource,
     instance::{Instance, InstanceKey},
 };
 
@@ -509,7 +509,7 @@ impl ViewerGui {
                             not(target_arch = "wasm32") => {
                                 self.event_sender
                                     .send(AppEvent::LoadFile {
-                                        path: file.path().to_path_buf(),
+                                        source: FileSource::Path(file.path().to_path_buf()),
                                         tabs: None,
                                     })
                                     .ok();
@@ -521,7 +521,7 @@ impl ViewerGui {
                                 wasm_bindgen_futures::spawn_local(async move {
                                     let event = match file.bytes_async().await {
                                         Ok(bytes) => AppEvent::LoadFile {
-                                            bytes: Arc::from(bytes),
+                                            source: FileSource::Bytes(Arc::from(bytes)),
                                             tabs: None,
                                         },
                                         Err(err) => AppEvent::Toast(egui_notify::Toast::error(

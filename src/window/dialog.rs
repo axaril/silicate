@@ -4,7 +4,7 @@ use egui_tiles::TileId;
 use silicate_compositor::buffer::BufferDimensions;
 use std::sync::mpsc::Sender;
 
-use crate::app::AppEvent;
+use crate::app::{AppEvent, FileSource};
 
 pub struct Dialog {
     event_sender: Sender<AppEvent>,
@@ -34,7 +34,7 @@ impl Dialog {
 
                 self.event_sender
                     .send(AppEvent::LoadFile {
-                        path: handle.path().to_path_buf(),
+                        source: FileSource::Path(handle.path().to_path_buf()),
                         tabs,
                     })
                     .unwrap();
@@ -59,7 +59,7 @@ impl Dialog {
                 log::info!("File read complete, loading file...");
                 self.event_sender
                     .send(AppEvent::LoadFile {
-                        bytes: Arc::from(data),
+                        source: FileSource::Bytes(Arc::from(data)),
                         tabs,
                     })
                     .unwrap();
