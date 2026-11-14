@@ -236,14 +236,16 @@ impl AppInstance {
                 let dialog = Dialog::new(self.event_sender.clone()).load_dialog(tabs);
                 rt.spawn(dialog);
             }
-            AppEvent::SaveDialog(texture) => {
+            AppEvent::SaveDialog { file, source } => {
                 if let Some(eframe::egui_wgpu::RenderState { device, queue, .. }) =
                     frame.wgpu_render_state()
                 {
                     let dialog = Dialog::new(self.event_sender.clone()).save_dialog(
                         device.clone(),
                         queue.clone(),
-                        texture,
+                        self.app.pipeline().clone(),
+                        file,
+                        source,
                     );
                     rt.spawn(dialog);
                 }

@@ -307,6 +307,43 @@ var<storage, read> silos: array<SiloData>;
 @group(1) @binding(4)
 var<uniform> bg_in: vec4f;
 
+// Color lookup applied to the final output, indexed by un-premultiplied
+// (r, g, b) and holding linear sRGB. A 1×1×1 table means no lookup.
+@group(0) @binding(1)
+var output_lut: texture_3d<f32>;
+
+fn lut_entry(index: vec3u) -> vec3f {
+    return textureLoad(output_lut, index, 0).rgb;
+}
+
+// Trilinear interpolation in f32. Hardware filtering would interpolate with
+// only ~8 bits of fractional precision, and the table isn't filterable.
+fn apply_output_lut(color: vec4f) -> vec4f {
+    let size = textureDimensions(output_lut).x;
+    if (size < 2u || color.a <= 0.0) {
+        return color;
+    }
+
+    let pos = saturate(color.rgb / color.a) * f32(size - 1u);
+    let i = min(vec3u(pos), vec3u(size - 2u));
+    let t = pos - vec3f(i);
+
+    let c00 = mix(lut_entry(i), lut_entry(i + vec3u(1u, 0u, 0u)), t.x);
+    let c10 = mix(lut_entry(i + vec3u(0u, 1u, 0u)), lut_entry(i + vec3u(1u, 1u, 0u)), t.x);
+    let c01 = mix(lut_entry(i + vec3u(0u, 0u, 1u)), lut_entry(i + vec3u(1u, 0u, 1u)), t.x);
+    let c11 = mix(lut_entry(i + vec3u(0u, 1u, 1u)), lut_entry(i + vec3u(1u, 1u, 1u)), t.x);
+    let linear = mix(mix(c00, c10, t.y), mix(c01, c11, t.y), t.z);
+
+    return vec4(srgb_encode(linear) * color.a, color.a);
+}
+
+// Clip linear values and apply the sRGB transfer curve. The table holds
+// linear, unclipped values so interpolation stays accurate at the gamut edge.
+fn srgb_encode(linear: vec3f) -> vec3f {
+    let x = saturate(linear);
+    return select(1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3(0.0031308));
+}
+
 fn load_atlas(tile: AtlasRef, px: vec2u) -> vec4f {
     let origin = vec2u(tile.origin & 0xFFFFu, tile.origin >> 16u);
     return textureLoad(atlas_texture, origin + px, tile.layer, 0);
@@ -392,5 +429,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
             src.a + dst.a - src.a * dst.a
         ));
     }
-    return dst;
+    return apply_output_lut(dst);
 }

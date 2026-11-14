@@ -107,14 +107,18 @@ impl SaveTarget {
         self.handle.file_name()
     }
 
-    /// Write the image, in the format implied by the chosen file extension.
-    pub async fn save(self, image: ExportedImage) -> Result<(), String> {
+    /// Write the image, in the format implied by the chosen file extension,
+    /// embedding the `icc` color profile where the format supports it.
+    pub async fn save(self, image: ExportedImage, icc: Option<Vec<u8>>) -> Result<(), String> {
         let path = self.handle.path().to_path_buf();
         log::info!("Saving the file to {}", path.display());
-        tokio::task::spawn_blocking(move || image.save(path))
-            .await
-            .map_err(|err| err.to_string())?
-            .map_err(|err| err.to_string())
+        tokio::task::spawn_blocking(move || {
+            let format = image::ImageFormat::from_path(&path).map_err(|err| err.to_string())?;
+            let bytes = super::encode_image(&image, format, icc.as_deref())?;
+            std::fs::write(&path, bytes).map_err(|err| err.to_string())
+        })
+        .await
+        .map_err(|err| err.to_string())?
     }
 
     /// Write the bytes as-is.

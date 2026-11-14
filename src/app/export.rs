@@ -1,4 +1,8 @@
-//! Exporting every layer of a document as a zip of PNGs.
+//! Exporting a document as a flattened image, or every layer of it as a zip
+//! of PNGs.
+//!
+//! Exports are rendered in the document's color space, without the display
+//! conversion, and carry the document's ICC profile (see [`super::color`]).
 
 use eframe::wgpu;
 use silica_gpu::{ProcreateFile, SilicaHierarchy, SilicaLayer};
@@ -12,7 +16,7 @@ use silicate_compositor::{
 };
 use std::io::{Cursor, Write as _};
 
-use super::{App, compositor::CompositorApp};
+use super::{App, color, compositor::CompositorApp};
 
 /// What's needed to render a document's layers outside its compositor.
 #[derive(Clone)]
@@ -72,6 +76,50 @@ fn collect_layers<'a>(layers: &'a [SilicaHierarchy], prefix: &str, out: &mut Vec
     }
 }
 
+/// The ICC profile to embed in images exported from `file`.
+pub fn export_icc(file: &ProcreateFile) -> Option<Vec<u8>> {
+    color::embeddable_icc(file.color_profile.as_ref().and_then(|p| p.icc_data.as_deref()))
+}
+
+/// Render the whole document as currently shown (visibility, opacity,
+/// blending, background), in the document's color space.
+pub async fn export_composite(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipeline: &Pipeline,
+    source: LayerSource,
+    file: &ProcreateFile,
+) -> Result<image::RgbaImage, String> {
+    let mut target = Compositor::new(
+        device,
+        queue,
+        source.canvas,
+        source.atlas,
+        source.atlas_texture,
+    );
+    target.set_background((!file.background_hidden).then_some(file.background_color));
+    target.set_flipped(file.flipped.horizontally, file.flipped.vertically);
+
+    let mut chunks = Vec::new();
+    CompositorApp::flatten_chunks(&mut chunks, &file.layers, true);
+    chunks.sort_by_key(|v| (v.col, v.row));
+    target.load_chunk_buffer(&chunks);
+    let mut layers = Vec::new();
+    CompositorApp::flatten_layers(&mut layers, &file.layers);
+    target.load_layer_buffer(&layers);
+
+    let texture = wgpu::Texture::empty(
+        device,
+        file.size.width,
+        file.size.height,
+        wgpu::Texture::OUTPUT_USAGE,
+    );
+    target.render(pipeline, texture.create_default_view());
+    App::export(&texture, device, queue, BufferDimensions::from_extent(texture.size()))
+        .await
+        .map_err(|err| err.to_string())
+}
+
 /// Render each layer on its own at full canvas size and pack them as PNGs
 /// into a zip archive.
 ///
@@ -106,6 +154,7 @@ pub async fn export_layers(
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let mut chunks = Vec::new();
+    let icc = export_icc(file);
 
     for LayerEntry { path, layer } in entries {
         let hierarchy = [SilicaHierarchy::Layer(layer.clone())];
@@ -131,14 +180,12 @@ pub async fn export_layers(
                 .map_err(|err| err.to_string())?
         };
 
-        let mut png = Cursor::new(Vec::new());
-        image
-            .write_to(&mut png, image::ImageFormat::Png)
-            .map_err(|err| err.to_string())?;
+        let png =
+            crate::platform::encode_image(&image, image::ImageFormat::Png, icc.as_deref())?;
 
         zip.start_file(path, options)
             .map_err(|err| err.to_string())?;
-        zip.write_all(png.get_ref())
+        zip.write_all(&png)
             .map_err(|err| err.to_string())?;
     }
 

@@ -24,10 +24,23 @@ impl Pipeline {
         let canvas_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("canvas_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ..buffer_entry(0, wgpu::BufferBindingType::Uniform)
-                }],
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ..buffer_entry(0, wgpu::BufferBindingType::Uniform)
+                    },
+                    // output color lookup table
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D3,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         // This bind group changes per composition run.

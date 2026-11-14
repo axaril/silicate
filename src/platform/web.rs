@@ -79,13 +79,11 @@ impl SaveTarget {
         self.file_name.clone()
     }
 
-    /// Encode the image as PNG and download it.
-    pub async fn save(self, image: ExportedImage) -> Result<(), String> {
-        let mut writer = std::io::Cursor::new(Vec::new());
-        image
-            .write_to(&mut writer, image::ImageFormat::Png)
-            .map_err(|err| err.to_string())?;
-        save_blob(writer.get_ref(), &self.file_name, "image/png")
+    /// Encode the image as PNG, embedding the `icc` color profile, and
+    /// download it.
+    pub async fn save(self, image: ExportedImage, icc: Option<Vec<u8>>) -> Result<(), String> {
+        let bytes = super::encode_image(&image, image::ImageFormat::Png, icc.as_deref())?;
+        save_blob(&bytes, &self.file_name, "image/png")
             .await
             .map_err(|err| format!("{err:?}"))
     }

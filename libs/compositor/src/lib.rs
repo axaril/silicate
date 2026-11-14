@@ -4,12 +4,14 @@ pub mod pipeline;
 pub mod tex;
 
 pub mod canvas;
+pub mod lut;
 
 use std::num::NonZeroU32;
 
 use blend::BlendingMode;
 use buffer::CompositorBuffers;
 use canvas::{CompositorAtlasTiling, CompositorCanvasTiling};
+use lut::OutputLut;
 use pipeline::Pipeline;
 use wgpu::{CommandEncoder, TextureView};
 
@@ -46,6 +48,8 @@ pub struct Compositor {
     queue: wgpu::Queue,
     buffers: CompositorBuffers,
     atlas_texture: wgpu::Texture,
+    /// Color lookup applied to the final output. 1×1×1 when disabled.
+    output_lut: wgpu::Texture,
     /// Cached bind groups, rebuilt only when a bound buffer is reallocated.
     bind_groups: Option<BindGroups>,
 }
@@ -64,13 +68,24 @@ impl BindGroups {
         pipeline: &Pipeline,
         buffers: &CompositorBuffers,
         atlas_texture: &wgpu::Texture,
+        output_lut: &wgpu::Texture,
     ) -> Self {
+        let lut_view = output_lut.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D3),
+            ..Default::default()
+        });
         let canvas = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &pipeline.canvas_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffers.canvas.buffer().as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.canvas.buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&lut_view),
+                },
+            ],
             label: Some("canvas_bind_group"),
         });
 
@@ -132,8 +147,20 @@ impl Compositor {
             queue: queue.clone(),
             buffers: CompositorBuffers::new(device, queue, canvas, atlas_data),
             atlas_texture,
+            output_lut: lut::disabled_lut_texture(device, queue),
             bind_groups: None,
         }
+    }
+
+    /// Set a color lookup to apply to the composited output, such as a
+    /// conversion from the document's color space to the display's. `None`
+    /// writes the composited colors unchanged.
+    pub fn set_output_lut(&mut self, lut: Option<&OutputLut>) {
+        self.output_lut = match lut {
+            Some(lut) => lut.create_texture(&self.device, &self.queue),
+            None => lut::disabled_lut_texture(&self.device, &self.queue),
+        };
+        self.bind_groups = None;
     }
 
     pub fn load_layer_buffer(&mut self, layers: &[CompositeLayer]) {
@@ -189,6 +216,7 @@ impl Compositor {
                 pipeline,
                 &self.buffers,
                 &self.atlas_texture,
+                &self.output_lut,
             ));
         }
 

@@ -1,4 +1,5 @@
 mod blend;
+pub mod color;
 pub mod compositor;
 pub mod export;
 pub mod instance;
@@ -42,7 +43,10 @@ pub enum AppEvent {
         tabs: Option<TileId>,
     },
     LoadDialog(Option<TileId>),
-    SaveDialog(wgpu::Texture),
+    SaveDialog {
+        file: ProcreateFile,
+        source: export::LayerSource,
+    },
     /// Export each layer of a document into a zip archive.
     ExportLayersDialog {
         file: ProcreateFile,
@@ -77,7 +81,7 @@ impl std::fmt::Debug for AppEvent {
             }
             AppEvent::FileDecoded { .. } => f.debug_tuple("FileDecoded").field(&"...").finish(),
             AppEvent::LoadDialog(_) => f.debug_tuple("LoadDialog").field(&"...").finish(),
-            AppEvent::SaveDialog(_) => f.debug_tuple("SaveDialog").field(&"...").finish(),
+            AppEvent::SaveDialog { .. } => f.debug_tuple("SaveDialog").field(&"...").finish(),
             AppEvent::ExportLayersDialog { .. } => {
                 f.debug_tuple("ExportLayersDialog").field(&"...").finish()
             }
@@ -210,13 +214,25 @@ impl App {
             (canvas_tiling.cols, canvas_tiling.rows),
             canvas_tiling.size,
         );
-        let composite_target = Compositor::new(
+        let icc = file.color_profile.as_ref().and_then(|p| p.icc_data.as_deref());
+        let display_lut = color::display_lut(icc);
+        log::info!(
+            "{id} Color profile: {} ({})",
+            file.color_profile
+                .as_ref()
+                .and_then(|p| p.name.as_deref())
+                .unwrap_or("none"),
+            if display_lut.is_some() { "converting to sRGB for display" } else { "displayed as-is" }
+        );
+
+        let mut composite_target = Compositor::new(
             &self.device,
             &self.queue,
             canvas,
             CompositorAtlasTiling::new(canvas_tiling.atlas.cols, canvas_tiling.atlas.rows),
             atlas_texture.clone(),
         );
+        composite_target.set_output_lut(display_lut.as_ref());
 
         let output_texture = wgpu::Texture::empty(
             &self.device,
@@ -266,17 +282,15 @@ impl App {
             file.name.as_deref().unwrap_or("Untitled Artwork")
         );
 
-        instance.generate_previews(
-            Compositor::new(
-                &self.device,
-                &self.queue,
-                canvas,
-                CompositorAtlasTiling::new(canvas_tiling.atlas.cols, canvas_tiling.atlas.rows),
-                atlas_texture,
-            ),
+        let mut preview_target = Compositor::new(
             &self.device,
-            &self.pipeline,
+            &self.queue,
+            canvas,
+            CompositorAtlasTiling::new(canvas_tiling.atlas.cols, canvas_tiling.atlas.rows),
+            atlas_texture,
         );
+        preview_target.set_output_lut(display_lut.as_ref());
+        instance.generate_previews(preview_target, &self.device, &self.pipeline);
 
         log::info!(
             "{id} Instance created for Procreate document \"{}\"",

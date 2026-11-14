@@ -40,7 +40,7 @@ impl CompositorHandle {
 impl CompositorApp {
     /// Transform tree structure of layers into a linear list of
     /// layers for rendering.
-    fn flatten_layers(
+    pub(crate) fn flatten_layers(
         composite_layers: &mut Vec<CompositeLayer>,
         layers: &[SilicaHierarchy],
     ) {

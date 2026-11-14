@@ -1,7 +1,6 @@
 use eframe::wgpu;
 use egui_notify::Toast;
 use egui_tiles::TileId;
-use silicate_compositor::buffer::BufferDimensions;
 use std::sync::mpsc::Sender;
 
 use crate::app::AppEvent;
@@ -46,7 +45,9 @@ impl Dialog {
         self,
         device: wgpu::Device,
         queue: wgpu::Queue,
-        copied_texture: wgpu::Texture,
+        pipeline: Pipeline,
+        file: ProcreateFile,
+        source: LayerSource,
     ) {
         let Some(target) = platform::pick_save_target().await else {
             self.send_toast(Toast::info("Export cancelled."));
@@ -54,10 +55,13 @@ impl Dialog {
         };
         let name = target.name();
 
-        let dim = BufferDimensions::from_extent(copied_texture.size());
-        let result = match crate::app::App::export(&copied_texture, &device, &queue, dim).await {
-            Ok(image) => target.save(image).await,
-            Err(err) => Err(err.to_string()),
+        let result = match crate::app::export::export_composite(
+            &device, &queue, &pipeline, source, &file,
+        )
+        .await
+        {
+            Ok(image) => target.save(image, crate::app::export::export_icc(&file)).await,
+            Err(err) => Err(err),
         };
 
         match result {

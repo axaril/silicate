@@ -82,8 +82,14 @@ impl ControlsGui {
             ui.label("Actions");
             ui.vertical(|ui| {
                 if ui.button("Export View").clicked() {
-                    let texture = instance.output_texture.clone();
-                    event_sender.send(AppEvent::SaveDialog(texture)).ok();
+                    // Rendered again for export, since the on-screen texture
+                    // has been converted for display.
+                    event_sender
+                        .send(AppEvent::SaveDialog {
+                            file: instance.file.clone(),
+                            source: instance.layer_source.clone(),
+                        })
+                        .ok();
                 }
                 if ui.button("Export Layers").clicked() {
                     event_sender
