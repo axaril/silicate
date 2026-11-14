@@ -8,4 +8,4 @@ pub use types::{
     file::ProcreateFile, group::SilicaGroup, hierarchy::SilicaHierarchy, layer::SilicaLayer,
 };
 
-pub use data::{BlendingMode, Flipped, Orientation};
+pub use data::{BlendingMode, ColorProfile, Flipped, LayerKind, Orientation, Rect};

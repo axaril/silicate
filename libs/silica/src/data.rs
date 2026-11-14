@@ -191,7 +191,110 @@ impl crate::ns_archive::NsDecode<'_> for Orientation {
             2 => Self::Clockwise180,
             3 => Self::Clockwise270,
             4 => Self::Clockwise90,
-            v => Err(NsArchiveError::BadValue(key.to_string(), v.to_string()))?,
+            // Orientation only affects how the canvas is presented, so an
+            // unrecognized value should not make the document unreadable.
+            _ => Self::Unknown,
         })
+    }
+}
+
+/// The role of a `SilicaLayer` object, from its `type` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerKind {
+    /// A regular content layer.
+    Layer,
+    /// The flattened document composite.
+    Composite,
+    /// The document-level mask (believed to be the selection mask).
+    DocumentMask,
+    /// A layer mask attached to a regular layer.
+    LayerMask,
+    /// A value not known to this version of the library.
+    Other(u64),
+}
+
+impl crate::ns_archive::NsDecode<'_> for LayerKind {
+    fn decode(nka: &NsArchive, key: &str, val: &plist::Value) -> Result<Self, NsArchiveError> {
+        Ok(match u64::decode(nka, key, val)? {
+            0 => Self::Layer,
+            1 => Self::Composite,
+            2 => Self::DocumentMask,
+            3 => Self::LayerMask,
+            v => Self::Other(v),
+        })
+    }
+}
+
+/// A rectangle in canvas pixels, using the same axes as the tile grid
+/// (x increases with tile column, y increases with tile row).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl crate::ns_archive::NsDecode<'_> for Rect {
+    /// Decodes a CGRect archived as four little-endian `f64`s.
+    fn decode(nka: &NsArchive, key: &str, val: &plist::Value) -> Result<Self, NsArchiveError> {
+        let bytes = <&[u8]>::decode(nka, key, val)?;
+        let [x, y, width, height] = le_array::<f64, 4, 8>(bytes, key)?;
+        Ok(Self {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
+}
+
+/// The ICC color profile that the document's pixel data is stored in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColorProfile {
+    /// Human-readable profile name, e.g. `"Display P3"`.
+    pub name: Option<String>,
+    /// Raw ICC profile bytes, suitable for embedding in exported images.
+    pub icc_data: Option<Vec<u8>>,
+}
+
+impl<'a> crate::ns_archive::NsDecode<'a> for ColorProfile {
+    fn decode(nka: &'a NsArchive, key: &'a str, val: &'a plist::Value) -> Result<Self, NsArchiveError> {
+        let refs = nka.bind(<&plist::Dictionary>::decode(nka, key, val)?);
+        Ok(Self {
+            name: refs.resolve_opt::<String>("SiColorProfileArchiveICCNameKey"),
+            icc_data: refs
+                .resolve_opt::<&[u8]>("SiColorProfileArchiveICCDataKey")
+                .map(<[u8]>::to_vec),
+        })
+    }
+}
+
+/// Splits `bytes` into exactly `N` little-endian values of `SIZE` bytes each.
+pub(crate) fn le_array<T: FromLeBytes<SIZE>, const N: usize, const SIZE: usize>(
+    bytes: &[u8],
+    key: &str,
+) -> Result<[T; N], NsArchiveError> {
+    if bytes.len() != N * SIZE {
+        return Err(NsArchiveError::TypeMismatch(key.to_string()));
+    }
+    Ok(std::array::from_fn(|i| {
+        T::from_le_bytes(bytes[i * SIZE..(i + 1) * SIZE].try_into().unwrap())
+    }))
+}
+
+pub(crate) trait FromLeBytes<const SIZE: usize> {
+    fn from_le_bytes(bytes: [u8; SIZE]) -> Self;
+}
+
+impl FromLeBytes<4> for f32 {
+    fn from_le_bytes(bytes: [u8; 4]) -> Self {
+        f32::from_le_bytes(bytes)
+    }
+}
+
+impl FromLeBytes<8> for f64 {
+    fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        f64::from_le_bytes(bytes)
     }
 }

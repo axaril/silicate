@@ -104,6 +104,10 @@ impl<'a> NsRefDictionary<'a> {
     pub fn resolve<T: NsDecode<'a>>(&self, key: &'a str) -> Result<T, NsArchiveError> {
         T::resolve(self, key)
     }
+
+    pub fn resolve_opt<T: NsDecode<'a>>(&self, key: &'a str) -> Option<T> {
+        <Option<T>>::resolve(self, key).ok().flatten()
+    }
 }
 
 pub trait NsDecode<'a>: Sized {
@@ -153,7 +157,10 @@ impl NsDecode<'_> for i64 {
 
 impl NsDecode<'_> for f64 {
     fn decode(_: &NsArchive, key: &str, val: &Value) -> Result<Self, NsArchiveError> {
+        // Whole-number reals may be archived as integers.
         val.as_real()
+            .or_else(|| val.as_signed_integer().map(|n| n as f64))
+            .or_else(|| val.as_unsigned_integer().map(|n| n as f64))
             .ok_or_else(|| NsArchiveError::TypeMismatch(key.to_string()))
     }
 }
