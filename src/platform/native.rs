@@ -90,6 +90,17 @@ pub async fn pick_save_target() -> Option<SaveTarget> {
         .map(|handle| SaveTarget { handle })
 }
 
+/// Ask the user where to save a zip archive, suggesting `file_name`.
+/// Returns `None` if they cancel.
+pub async fn pick_archive_target(file_name: &str) -> Option<SaveTarget> {
+    rfd::AsyncFileDialog::new()
+        .add_filter("zip", &["zip"])
+        .set_file_name(file_name)
+        .save_file()
+        .await
+        .map(|handle| SaveTarget { handle })
+}
+
 impl SaveTarget {
     /// A name for the target, for messages to the user.
     pub fn name(&self) -> String {
@@ -101,6 +112,16 @@ impl SaveTarget {
         let path = self.handle.path().to_path_buf();
         log::info!("Saving the file to {}", path.display());
         tokio::task::spawn_blocking(move || image.save(path))
+            .await
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())
+    }
+
+    /// Write the bytes as-is.
+    pub async fn save_bytes(self, bytes: Vec<u8>) -> Result<(), String> {
+        let path = self.handle.path().to_path_buf();
+        log::info!("Saving the file to {}", path.display());
+        tokio::task::spawn_blocking(move || std::fs::write(path, bytes))
             .await
             .map_err(|err| err.to_string())?
             .map_err(|err| err.to_string())

@@ -85,6 +85,14 @@ impl ControlsGui {
                     let texture = instance.output_texture.clone();
                     event_sender.send(AppEvent::SaveDialog(texture)).ok();
                 }
+                if ui.button("Export Layers").clicked() {
+                    event_sender
+                        .send(AppEvent::ExportLayersDialog {
+                            file: instance.file.clone(),
+                            source: instance.layer_source.clone(),
+                        })
+                        .ok();
+                }
             });
         });
     }

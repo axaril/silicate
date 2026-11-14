@@ -2704,6 +2704,7 @@ dependencies = [
  "wasm-bindgen-rayon",
  "web-sys",
  "winres",
+ "zip",
 ]
 
 [[package]]

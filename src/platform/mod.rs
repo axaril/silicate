@@ -12,6 +12,8 @@
 //! - [`pick_file`] and [`read_dropped_file`]: get a [`FileSource`] from the
 //!   user.
 //! - [`pick_save_target`] and [`SaveTarget::save`]: write an exported image.
+//! - [`pick_archive_target`] and [`SaveTarget::save_bytes`]: write an
+//!   exported zip archive.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;

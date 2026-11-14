@@ -31,6 +31,8 @@ pub struct Instance {
     pub rotation: f32,
     pub preview_textures: Option<wgpu::Texture>,
     pub compositor: CompositorHandle,
+    /// For rendering layers on their own, such as when exporting them.
+    pub layer_source: super::export::LayerSource,
 
     pub previews: HashMap<u32, SizedTexture>,
     pub canvas: Option<SizedTexture>,

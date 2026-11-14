@@ -1,5 +1,6 @@
 mod blend;
 pub mod compositor;
+pub mod export;
 pub mod instance;
 
 use crate::platform::{self, FileSource};
@@ -42,6 +43,11 @@ pub enum AppEvent {
     },
     LoadDialog(Option<TileId>),
     SaveDialog(wgpu::Texture),
+    /// Export each layer of a document into a zip archive.
+    ExportLayersDialog {
+        file: ProcreateFile,
+        source: export::LayerSource,
+    },
     Toast(egui_notify::Toast),
     SetTheme(egui::ThemePreference),
     #[cfg(target_arch = "wasm32")]
@@ -72,6 +78,9 @@ impl std::fmt::Debug for AppEvent {
             AppEvent::FileDecoded { .. } => f.debug_tuple("FileDecoded").field(&"...").finish(),
             AppEvent::LoadDialog(_) => f.debug_tuple("LoadDialog").field(&"...").finish(),
             AppEvent::SaveDialog(_) => f.debug_tuple("SaveDialog").field(&"...").finish(),
+            AppEvent::ExportLayersDialog { .. } => {
+                f.debug_tuple("ExportLayersDialog").field(&"...").finish()
+            }
             AppEvent::SetTheme(theme) => f.debug_tuple("SetTheme").field(theme).finish(),
             #[cfg(target_arch = "wasm32")]
             AppEvent::LoadDemoFile => f.debug_tuple("LoadDemoFile").finish(),
@@ -170,6 +179,10 @@ impl App {
         Ok((file, atlas))
     }
 
+    pub fn pipeline(&self) -> &Pipeline {
+        &self.pipeline
+    }
+
     pub fn create_instance(
         &self,
         file: ProcreateFile,
@@ -235,6 +248,14 @@ impl App {
             output_texture: output_texture.clone(),
             preview_textures: None,
             compositor: handle,
+            layer_source: export::LayerSource {
+                canvas,
+                atlas: CompositorAtlasTiling::new(
+                    canvas_tiling.atlas.cols,
+                    canvas_tiling.atlas.rows,
+                ),
+                atlas_texture: atlas_texture.clone(),
+            },
             rotation,
             previews: HashMap::new(),
             canvas: None,

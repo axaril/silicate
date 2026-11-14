@@ -54,18 +54,29 @@ pub async fn read_dropped_file(file: egui::DroppedFileHandle) -> Result<FileSour
     Ok(FileSource::Bytes(Arc::from(bytes)))
 }
 
-/// Exported images are offered as a browser download.
-pub struct SaveTarget;
+/// Exported files are offered as a browser download.
+pub struct SaveTarget {
+    file_name: String,
+}
 
 /// Browsers choose the download location themselves, so this never cancels.
 pub async fn pick_save_target() -> Option<SaveTarget> {
-    Some(SaveTarget)
+    Some(SaveTarget {
+        file_name: "image.png".to_owned(),
+    })
+}
+
+/// Browsers choose the download location themselves, so this never cancels.
+pub async fn pick_archive_target(file_name: &str) -> Option<SaveTarget> {
+    Some(SaveTarget {
+        file_name: file_name.to_owned(),
+    })
 }
 
 impl SaveTarget {
     /// A name for the target, for messages to the user.
     pub fn name(&self) -> String {
-        "image.png".to_owned()
+        self.file_name.clone()
     }
 
     /// Encode the image as PNG and download it.
@@ -74,7 +85,14 @@ impl SaveTarget {
         image
             .write_to(&mut writer, image::ImageFormat::Png)
             .map_err(|err| err.to_string())?;
-        save_blob_as_png(writer.get_ref(), &self.name())
+        save_blob(writer.get_ref(), &self.file_name, "image/png")
+            .await
+            .map_err(|err| format!("{err:?}"))
+    }
+
+    /// Download the bytes as a zip archive.
+    pub async fn save_bytes(self, bytes: Vec<u8>) -> Result<(), String> {
+        save_blob(&bytes, &self.file_name, "application/zip")
             .await
             .map_err(|err| format!("{err:?}"))
     }
@@ -105,7 +123,7 @@ async fn fetch_blob(resource_name: &str) -> Result<Vec<u8>, JsValue> {
     Ok(body)
 }
 
-async fn save_blob_as_png(blob: &[u8], file_name: &str) -> Result<(), JsValue> {
+async fn save_blob(blob: &[u8], file_name: &str, mime_type: &str) -> Result<(), JsValue> {
     let byte_array = js_sys::Uint8Array::from(blob);
     log::debug!(
         "Created Uint8Array from blob, length: {}",
@@ -120,7 +138,7 @@ async fn save_blob_as_png(blob: &[u8], file_name: &str) -> Result<(), JsValue> {
 
     let options = {
         let options = web_sys::BlobPropertyBag::new();
-        options.set_type("image/png");
+        options.set_type(mime_type);
         options
     };
 

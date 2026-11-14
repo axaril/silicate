@@ -5,7 +5,10 @@ use silicate_compositor::buffer::BufferDimensions;
 use std::sync::mpsc::Sender;
 
 use crate::app::AppEvent;
+use crate::app::export::LayerSource;
 use crate::platform;
+use silica_gpu::ProcreateFile;
+use silicate_compositor::pipeline::Pipeline;
 
 pub struct Dialog {
     event_sender: Sender<AppEvent>,
@@ -63,6 +66,40 @@ impl Dialog {
             ))),
             Err(err) => self.send_toast(Toast::error(format!(
                 "File {name} failed to export. Reason: {err}."
+            ))),
+        }
+    }
+
+    pub async fn export_layers_dialog(
+        self,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        pipeline: Pipeline,
+        file: ProcreateFile,
+        source: LayerSource,
+    ) {
+        let file_name = format!("{}.zip", file.name.as_deref().unwrap_or("Untitled Artwork"));
+        let Some(target) = platform::pick_archive_target(&file_name).await else {
+            self.send_toast(Toast::info("Export cancelled."));
+            return;
+        };
+        let name = target.name();
+
+        let result = match crate::app::export::export_layers(
+            &device, &queue, &pipeline, source, &file,
+        )
+        .await
+        {
+            Ok(bytes) => target.save_bytes(bytes).await,
+            Err(err) => Err(err),
+        };
+
+        match result {
+            Ok(()) => self.send_toast(Toast::success(format!(
+                "Layers successfully exported to {name}."
+            ))),
+            Err(err) => self.send_toast(Toast::error(format!(
+                "Layers failed to export to {name}. Reason: {err}."
             ))),
         }
     }

@@ -94,7 +94,7 @@ impl CompositorApp {
         }
     }
 
-    fn flatten_chunks(
+    pub(crate) fn flatten_chunks(
         composite_layers: &mut Vec<ChunkTile>,
         layers: &[SilicaHierarchy],
         render_masks: bool,

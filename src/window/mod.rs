@@ -248,6 +248,20 @@ impl AppInstance {
                     rt.spawn(dialog);
                 }
             }
+            AppEvent::ExportLayersDialog { file, source } => {
+                if let Some(eframe::egui_wgpu::RenderState { device, queue, .. }) =
+                    frame.wgpu_render_state()
+                {
+                    let dialog = Dialog::new(self.event_sender.clone()).export_layers_dialog(
+                        device.clone(),
+                        queue.clone(),
+                        self.app.pipeline().clone(),
+                        file,
+                        source,
+                    );
+                    rt.spawn(dialog);
+                }
+            }
             AppEvent::NewView(tabs, id) => {
                 self.viewer.add_view(tabs, id);
             }
