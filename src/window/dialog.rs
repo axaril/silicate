@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 use crate::app::AppEvent;
 use crate::app::export::LayerSource;
-use crate::platform;
+use crate::platform::{self, BytesFormat};
 use silica_gpu::ProcreateFile;
 use silicate_compositor::pipeline::Pipeline;
 
@@ -77,19 +77,30 @@ impl Dialog {
         pipeline: Pipeline,
         file: ProcreateFile,
         source: LayerSource,
+        format: BytesFormat,
     ) {
-        let file_name = format!("{}.zip", file.name.as_deref().unwrap_or("Untitled Artwork"));
-        let Some(target) = platform::pick_archive_target(&file_name).await else {
+        let file_name = format!(
+            "{}.{}",
+            file.name.as_deref().unwrap_or("Untitled Artwork"),
+            format.extension()
+        );
+        let Some(target) = platform::pick_bytes_target(&file_name, format).await else {
             self.send_toast(Toast::info("Export cancelled."));
             return;
         };
         let name = target.name();
 
-        let result = match crate::app::export::export_layers(
-            &device, &queue, &pipeline, source, &file,
-        )
-        .await
-        {
+        let export = match format {
+            BytesFormat::Zip => crate::app::export::export_layers(
+                &device, &queue, &pipeline, source, &file,
+            )
+            .await,
+            BytesFormat::Psd => crate::app::export::export_psd(
+                &device, &queue, &pipeline, source, &file,
+            )
+            .await,
+        };
+        let result = match export {
             Ok(bytes) => target.save_bytes(bytes).await,
             Err(err) => Err(err),
         };

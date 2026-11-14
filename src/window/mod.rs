@@ -248,7 +248,11 @@ impl AppInstance {
                     rt.spawn(dialog);
                 }
             }
-            AppEvent::ExportLayersDialog { file, source } => {
+            AppEvent::ExportLayersDialog {
+                file,
+                source,
+                format,
+            } => {
                 if let Some(eframe::egui_wgpu::RenderState { device, queue, .. }) =
                     frame.wgpu_render_state()
                 {
@@ -258,6 +262,7 @@ impl AppInstance {
                         self.app.pipeline().clone(),
                         file,
                         source,
+                        format,
                     );
                     rt.spawn(dialog);
                 }

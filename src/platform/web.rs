@@ -1,4 +1,4 @@
-use super::ExportedImage;
+use super::{BytesFormat, ExportedImage};
 use silica_gpu::error::SilicaError;
 use std::sync::Arc;
 use wasm_bindgen_futures::JsFuture;
@@ -57,19 +57,22 @@ pub async fn read_dropped_file(file: egui::DroppedFileHandle) -> Result<FileSour
 /// Exported files are offered as a browser download.
 pub struct SaveTarget {
     file_name: String,
+    mime_type: &'static str,
 }
 
 /// Browsers choose the download location themselves, so this never cancels.
 pub async fn pick_save_target() -> Option<SaveTarget> {
     Some(SaveTarget {
         file_name: "image.png".to_owned(),
+        mime_type: "image/png",
     })
 }
 
 /// Browsers choose the download location themselves, so this never cancels.
-pub async fn pick_archive_target(file_name: &str) -> Option<SaveTarget> {
+pub async fn pick_bytes_target(file_name: &str, format: BytesFormat) -> Option<SaveTarget> {
     Some(SaveTarget {
         file_name: file_name.to_owned(),
+        mime_type: format.mime_type(),
     })
 }
 
@@ -85,14 +88,14 @@ impl SaveTarget {
         image
             .write_to(&mut writer, image::ImageFormat::Png)
             .map_err(|err| err.to_string())?;
-        save_blob(writer.get_ref(), &self.file_name, "image/png")
+        save_blob(writer.get_ref(), &self.file_name, self.mime_type)
             .await
             .map_err(|err| format!("{err:?}"))
     }
 
-    /// Download the bytes as a zip archive.
+    /// Download the bytes as-is.
     pub async fn save_bytes(self, bytes: Vec<u8>) -> Result<(), String> {
-        save_blob(&bytes, &self.file_name, "application/zip")
+        save_blob(&bytes, &self.file_name, self.mime_type)
             .await
             .map_err(|err| format!("{err:?}"))
     }

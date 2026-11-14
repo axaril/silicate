@@ -2,6 +2,7 @@ mod blend;
 pub mod compositor;
 pub mod export;
 pub mod instance;
+mod psd;
 
 use crate::platform::{self, FileSource};
 use compositor::CompositorApp;
@@ -43,10 +44,11 @@ pub enum AppEvent {
     },
     LoadDialog(Option<TileId>),
     SaveDialog(wgpu::Texture),
-    /// Export each layer of a document into a zip archive.
+    /// Export each layer of a document, into a zip archive of PNGs or a PSD.
     ExportLayersDialog {
         file: ProcreateFile,
         source: export::LayerSource,
+        format: platform::BytesFormat,
     },
     Toast(egui_notify::Toast),
     SetTheme(egui::ThemePreference),

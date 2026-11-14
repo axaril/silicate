@@ -1,4 +1,4 @@
-use super::ExportedImage;
+use super::{BytesFormat, ExportedImage};
 use silica_gpu::error::SilicaError;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -90,11 +90,11 @@ pub async fn pick_save_target() -> Option<SaveTarget> {
         .map(|handle| SaveTarget { handle })
 }
 
-/// Ask the user where to save a zip archive, suggesting `file_name`.
-/// Returns `None` if they cancel.
-pub async fn pick_archive_target(file_name: &str) -> Option<SaveTarget> {
+/// Ask the user where to save a file of the given format, suggesting
+/// `file_name`. Returns `None` if they cancel.
+pub async fn pick_bytes_target(file_name: &str, format: BytesFormat) -> Option<SaveTarget> {
     rfd::AsyncFileDialog::new()
-        .add_filter("zip", &["zip"])
+        .add_filter(format.extension(), &[format.extension()])
         .set_file_name(file_name)
         .save_file()
         .await

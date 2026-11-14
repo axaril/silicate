@@ -12,6 +12,7 @@ use crate::app::{
     instance::{Instance, InstanceKey},
 };
 
+use crate::platform::BytesFormat;
 use canvas::CanvasView;
 use silicate::background::BackgroundControl;
 use silicate::hierarchy::LayersHierarchy;
@@ -79,19 +80,25 @@ impl ControlsGui {
 
     fn layout_export_control(ui: &mut Ui, event_sender: &Sender<AppEvent>, instance: &Instance) {
         Grid::new("Share Grid").num_columns(2).show(ui, |ui| {
-            ui.label("Actions");
-            ui.vertical(|ui| {
-                if ui.button("Export View").clicked() {
+            ui.label("Export");
+            ui.horizontal(|ui| {
+                if ui.button("View").clicked() {
                     let texture = instance.output_texture.clone();
                     event_sender.send(AppEvent::SaveDialog(texture)).ok();
                 }
-                if ui.button("Export Layers").clicked() {
-                    event_sender
-                        .send(AppEvent::ExportLayersDialog {
-                            file: instance.file.clone(),
-                            source: instance.layer_source.clone(),
-                        })
-                        .ok();
+                for (label, format) in [
+                    ("Layers", BytesFormat::Zip),
+                    ("PSD", BytesFormat::Psd),
+                ] {
+                    if ui.button(label).clicked() {
+                        event_sender
+                            .send(AppEvent::ExportLayersDialog {
+                                file: instance.file.clone(),
+                                source: instance.layer_source.clone(),
+                                format,
+                            })
+                            .ok();
+                    }
                 }
             });
         });
