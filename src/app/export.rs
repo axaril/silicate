@@ -10,9 +10,11 @@ use silicate_compositor::{
     pipeline::Pipeline,
     tex::TextureExt,
 };
+use std::collections::VecDeque;
 use std::io::{Cursor, Write as _};
 
 use super::{App, compositor::CompositorApp, psd};
+use crate::platform;
 
 /// What's needed to render a document's layers outside its compositor.
 #[derive(Clone)]
@@ -234,6 +236,79 @@ impl<'a> LayerRenderer<'a> {
     }
 }
 
+/// Runs the CPU-heavy part of exporting a layer, such as compression, on
+/// the rayon pool, so it overlaps with rendering the next layer and with
+/// encoding the others. Results come back in the order jobs were pushed.
+///
+/// Each queued job holds at least one full-canvas image, so the number of
+/// jobs in flight is capped by a memory budget as well as the pool size.
+/// Without a pool (wasm builds without threads), jobs run inline.
+struct EncodeQueue<T> {
+    running: VecDeque<tokio::sync::oneshot::Receiver<Result<T, String>>>,
+    done: Vec<T>,
+    limit: usize,
+    use_workers: bool,
+}
+
+impl<T: Send + 'static> EncodeQueue<T> {
+    /// Memory for the images held by queued jobs.
+    const BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
+
+    /// A queue for jobs that each hold images of about `job_bytes`.
+    fn new(job_bytes: u64) -> Self {
+        let use_workers = platform::decode_on_workers();
+        let by_memory = (Self::BUDGET_BYTES / job_bytes.max(1)).max(1) as usize;
+        let by_threads = if use_workers {
+            rayon::current_num_threads() + 1
+        } else {
+            1
+        };
+        Self {
+            running: VecDeque::new(),
+            done: Vec::new(),
+            limit: by_memory.min(by_threads),
+            use_workers,
+        }
+    }
+
+    async fn push(
+        &mut self,
+        job: impl FnOnce() -> Result<T, String> + Send + 'static,
+    ) -> Result<(), String> {
+        if !self.use_workers {
+            self.done.push(job()?);
+            return Ok(());
+        }
+        while self.running.len() >= self.limit {
+            self.wait_oldest().await?;
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        rayon::spawn(move || {
+            let _ = tx.send(job());
+        });
+        self.running.push_back(rx);
+        Ok(())
+    }
+
+    async fn wait_oldest(&mut self) -> Result<(), String> {
+        if let Some(rx) = self.running.pop_front() {
+            let result = rx
+                .await
+                .map_err(|_| "An export worker stopped unexpectedly".to_owned())?;
+            self.done.push(result?);
+        }
+        Ok(())
+    }
+
+    /// Wait for every job and return the results in order.
+    async fn finish(mut self) -> Result<Vec<T>, String> {
+        while !self.running.is_empty() {
+            self.wait_oldest().await?;
+        }
+        Ok(self.done)
+    }
+}
+
 fn color_byte(c: f32) -> u8 {
     (c.clamp(0.0, 1.0) * 255.0).round() as u8
 }
@@ -269,24 +344,29 @@ pub async fn export_layers(
     collect_layers(&file.layers, "", &mut entries);
 
     let mut renderer = LayerRenderer::new(device, queue, pipeline, source, file);
+    let mut encoder = EncodeQueue::new(canvas_bytes(file));
+
+    for LayerEntry { path, layer } in entries {
+        let image = renderer.render_layer(layer, layer.opacity, true).await?;
+        encoder
+            .push(move || {
+                let mut png = Cursor::new(Vec::new());
+                image
+                    .write_to(&mut png, image::ImageFormat::Png)
+                    .map_err(|err| err.to_string())?;
+                Ok((path, png.into_inner()))
+            })
+            .await?;
+    }
 
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     // PNGs are already compressed.
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-
-    for LayerEntry { path, layer } in entries {
-        let image = renderer.render_layer(layer, layer.opacity, true).await?;
-
-        let mut png = Cursor::new(Vec::new());
-        image
-            .write_to(&mut png, image::ImageFormat::Png)
-            .map_err(|err| err.to_string())?;
-
+    for (path, png) in encoder.finish().await? {
         zip.start_file(path, options)
             .map_err(|err| err.to_string())?;
-        zip.write_all(png.get_ref())
-            .map_err(|err| err.to_string())?;
+        zip.write_all(&png).map_err(|err| err.to_string())?;
     }
 
     zip.finish()
@@ -358,66 +438,112 @@ pub async fn export_psd(
     collect_psd_items(&file.layers, &mut items);
 
     let mut renderer = LayerRenderer::new(device, queue, pipeline, source, file);
-    // Top to bottom; PSDs store them bottom to top.
-    let mut records = Vec::with_capacity(items.len() + 1);
+    // A layer job holds its image and possibly a mask a quarter its size.
+    let mut encoder = EncodeQueue::new(canvas_bytes(file) * 5 / 4);
 
+    // Records are pushed top to bottom; PSDs store them bottom to top.
     for item in items {
         match item {
-            PsdItem::GroupStart(group) => records.push(psd::Record::group(
-                psd::Properties {
-                    name: group.name.as_deref().unwrap_or("Group"),
-                    opacity: group.opacity,
-                    hidden: group.hidden,
-                },
-                group.collapsed,
-            )),
-            PsdItem::GroupEnd => records.push(psd::Record::group_end()),
+            PsdItem::GroupStart(group) => {
+                let record = psd::Record::group(
+                    psd::Properties {
+                        name: group.name.as_deref().unwrap_or("Group"),
+                        opacity: group.opacity,
+                        hidden: group.hidden,
+                    },
+                    group.collapsed,
+                );
+                encoder.push(move || Ok(PsdPart::Record(record))).await?;
+            }
+            PsdItem::GroupEnd => {
+                encoder
+                    .push(|| Ok(PsdPart::Record(psd::Record::group_end())))
+                    .await?;
+            }
             PsdItem::Layer { layer, clipped } => {
                 let mut image = renderer.render_layer(layer, 1.0, false).await?;
-                unpremultiply(&mut image);
                 let mask = match &layer.mask {
                     Some(mask) => Some((renderer.render_mask(layer, mask).await?, mask.hidden)),
                     None => None,
                 };
-                records.push(psd::Record::layer(
-                    psd::Properties {
-                        name: layer.name.as_deref().unwrap_or("Layer"),
-                        opacity: layer.opacity,
-                        hidden: layer.hidden,
-                    },
-                    &image,
-                    layer.blend,
-                    clipped,
-                    layer.alpha_locked,
-                    mask.as_ref().map(|(image, disabled)| psd::Mask {
-                        image,
-                        disabled: *disabled,
-                    }),
-                ));
+                let name = layer.name.clone().unwrap_or_else(|| "Layer".to_owned());
+                let (opacity, hidden) = (layer.opacity, layer.hidden);
+                let (blend, alpha_locked) = (layer.blend, layer.alpha_locked);
+                encoder
+                    .push(move || {
+                        unpremultiply(&mut image);
+                        Ok(PsdPart::Record(psd::Record::layer(
+                            psd::Properties {
+                                name: &name,
+                                opacity,
+                                hidden,
+                            },
+                            &image,
+                            blend,
+                            clipped,
+                            alpha_locked,
+                            mask.as_ref().map(|(image, disabled)| psd::Mask {
+                                image,
+                                disabled: *disabled,
+                            }),
+                        )))
+                    })
+                    .await?;
             }
         }
     }
 
     let [r, g, b, _] = file.background_color.map(color_byte);
-    let background = image::RgbaImage::from_pixel(width, height, image::Rgba([r, g, b, 255]));
-    records.push(psd::Record::layer(
-        psd::Properties {
-            name: "Background color",
-            opacity: 1.0,
-            hidden: file.background_hidden,
-        },
-        &background,
-        silica_gpu::BlendingMode::Normal,
-        false,
-        false,
-        None,
-    ));
-    drop(background);
+    let background_hidden = file.background_hidden;
+    encoder
+        .push(move || {
+            let background =
+                image::RgbaImage::from_pixel(width, height, image::Rgba([r, g, b, 255]));
+            Ok(PsdPart::Record(psd::Record::layer(
+                psd::Properties {
+                    name: "Background color",
+                    opacity: 1.0,
+                    hidden: background_hidden,
+                },
+                &background,
+                silica_gpu::BlendingMode::Normal,
+                false,
+                false,
+                None,
+            )))
+        })
+        .await?;
 
     let visible_background = (!file.background_hidden).then_some(file.background_color);
     let mut merged = renderer.render_document(file, visible_background).await?;
-    unpremultiply(&mut merged);
+    encoder
+        .push(move || {
+            unpremultiply(&mut merged);
+            Ok(PsdPart::Merged(psd::Merged::encode(&merged)))
+        })
+        .await?;
+
+    let mut records = Vec::new();
+    let mut merged = None;
+    for part in encoder.finish().await? {
+        match part {
+            PsdPart::Record(record) => records.push(record),
+            PsdPart::Merged(image) => merged = Some(image),
+        }
+    }
+    let merged = merged.expect("the merged image is always encoded");
 
     records.reverse();
     psd::write(width, height, &records, &merged)
+}
+
+/// What an [`export_psd`] encoding job produces.
+enum PsdPart {
+    Record(psd::Record),
+    Merged(psd::Merged),
+}
+
+/// The size of a full-canvas RGBA image.
+fn canvas_bytes(file: &ProcreateFile) -> u64 {
+    u64::from(file.size.width) * u64::from(file.size.height) * 4
 }

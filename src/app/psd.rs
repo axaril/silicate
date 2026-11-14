@@ -275,14 +275,8 @@ impl Record {
 /// Write a PSD document.
 ///
 /// `records` are ordered bottom to top, as Photoshop stores them. `merged`
-/// is the flattened image shown by readers that don't understand layers,
-/// straight (not premultiplied).
-pub fn write(
-    width: u32,
-    height: u32,
-    records: &[Record],
-    merged: &image::RgbaImage,
-) -> Result<Vec<u8>, String> {
+/// is the flattened image shown by readers that don't understand layers.
+pub fn write(width: u32, height: u32, records: &[Record], merged: &Merged) -> Result<Vec<u8>, String> {
     if width > MAX_DIMENSION || height > MAX_DIMENSION {
         return Err(format!(
             "PSD files can't be larger than {MAX_DIMENSION}×{MAX_DIMENSION} pixels"
@@ -330,15 +324,26 @@ pub fn write(
     // No global layer mask.
     out.extend_from_slice(&0u32.to_be_bytes());
 
-    write_merged(merged, &mut out);
+    out.extend_from_slice(&merged.0);
     Ok(out)
 }
 
-/// The merged image: RLE compressed, with the byte counts of every row of
-/// every channel up front, then each channel in turn.
-///
-/// Photoshop expects the color of a transparent merged image to be matted
-/// against white.
+/// The encoded merged image: RLE compressed, with the byte counts of every
+/// row of every channel up front, then each channel in turn.
+pub struct Merged(Vec<u8>);
+
+impl Merged {
+    /// Encode a straight (not premultiplied) image.
+    ///
+    /// Photoshop expects the color of a transparent merged image to be
+    /// matted against white.
+    pub fn encode(image: &image::RgbaImage) -> Self {
+        let mut out = Vec::new();
+        write_merged(image, &mut out);
+        Self(out)
+    }
+}
+
 fn write_merged(image: &image::RgbaImage, out: &mut Vec<u8>) {
     let (width, height) = image.dimensions();
     let mut counts = Vec::with_capacity(4 * height as usize);
@@ -584,7 +589,7 @@ mod tests {
             Record::layer(props("Hidden", true), &red, BlendingMode::Screen, false, false, None),
         ];
         records.reverse();
-        let bytes = write(w, h, &records, &blue).unwrap();
+        let bytes = write(w, h, &records, &Merged::encode(&blue)).unwrap();
         if let Ok(path) = std::env::var("PSD_SAMPLE") {
             std::fs::write(path, bytes).unwrap();
         }
