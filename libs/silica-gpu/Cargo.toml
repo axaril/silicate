@@ -14,5 +14,5 @@ zip = { workspace = true, features = ["deflate"] }
 lzokay = { version = "2.0", default-features = false, features = [
     "decompress",
 ] }
-lz4_flex = { version = "0.12", default-features = false, features = ["frame"] }
+lz4_flex = { version = "0.14", default-features = false, features = ["frame"] }
 rayon = "1"

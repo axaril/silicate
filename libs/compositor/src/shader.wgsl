@@ -52,27 +52,17 @@ fn vs_main(
     return out;
 }
 
-// Blening cod ///////////////////////////////////////////////////////////////
+// Blending code ///////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
+// All functions take straight (non-premultiplied) backdrop `b` and source `s`
+// in [0, 1]. Conditionals use `select` rather than `mix(.., step(..))`: `mix`
+// evaluates both arms arithmetically, so an inf/NaN in the unused arm (e.g. a
+// division by zero) leaks into the result, while `select` discards it. It is
+// also cheaper (a single conditional move instead of a lerp).
 
 // HSL Blending Modes //////////////////////////////////////////////////////////
 // [PDF Blend Modes: Addendum]
 // [KHR_blend_equation_advanced]
-fn rgb2hsv(c: vec3f) -> vec3f {
-    let K = vec4f(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
-    let p = mix(vec4f(c.bg, K.wz), vec4f(c.gb, K.xy), step(c.b, c.g));
-    let q = mix(vec4f(p.xyw, c.r), vec4f(c.r, p.yzx), step(p.x, c.r));
-
-    let d = q.x - min(q.w, q.y);
-    let e = 1.0e-10;
-    return vec3f(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-}
-
-fn hsv2rgb(c: vec3f) -> vec3f {
-    let K = vec4f(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-    let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, saturate(p - K.xxx), c.y);
-}
 
 fn lum(c: vec3f) -> f32 {
     return dot(c, vec3(0.3, 0.59, 0.11));
@@ -84,7 +74,7 @@ fn clip_color(c: vec3f) -> vec3f {
     let x = max(max(c.r, c.g), c.b);
     var z = c;
     if (n < 0.0) {
-        z = l + (((c - l) * l) / (l - n));
+        z = l + (((z - l) * l) / (l - n));
     }
     if (x > 1.0) {
         z = l + (((z - l) * (1.0 - l)) / (x - l));
@@ -93,40 +83,36 @@ fn clip_color(c: vec3f) -> vec3f {
 }
 
 fn set_lum(c: vec3f, l: f32) -> vec3f {
-    let d = l - lum(c);
-    return clip_color(c + d);
+    return clip_color(c + (l - lum(c)));
 }
 
 fn sat(c: vec3f) -> f32 {
-    let n = min(min(c.r, c.g), c.b);
-    let x = max(max(c.r, c.g), c.b);
-    return x - n;
+    return max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
 }
 
-fn set_sat(cb: vec3f, s: f32) -> vec3f {
-    let mb = min(min(cb.r, cb.g), cb.b);
-    let sb = sat(cb);
-    // Equivalent (modulo rounding errors) to setting the
-    // smallest (R,G,B) component to 0, the largest to <ssat>,
-    // and interpolating the "middle" component based on its
-    // original value relative to the smallest/largest.
-    return select(vec3(0.0), (cb - mb) * s / sb, sb > 0.0);
+fn set_sat(c: vec3f, s: f32) -> vec3f {
+    // Equivalent (modulo rounding errors) to setting the smallest component
+    // to 0, the largest to `s`, and interpolating the middle component based
+    // on its original value relative to the smallest/largest.
+    let n = min(min(c.r, c.g), c.b);
+    let sc = max(max(c.r, c.g), c.b) - n;
+    return select(vec3(0.0), (c - n) * (s / sc), sc > 0.0);
 }
 
 fn color(b: vec3f, s: vec3f) -> vec3f {
-    return set_lum(s.rgb, lum(b.rgb));
+    return set_lum(s, lum(b));
 }
 
 fn luminosity(b: vec3f, s: vec3f) -> vec3f {
-    return set_lum(b.rgb, lum(s.rgb));
+    return set_lum(b, lum(s));
 }
 
 fn hue(b: vec3f, s: vec3f) -> vec3f {
-    return set_lum(set_sat(s.rgb, sat(b.rgb)), lum(b.rgb));
+    return set_lum(set_sat(s, sat(b)), lum(b));
 }
 
 fn saturation(b: vec3f, s: vec3f) -> vec3f {
-    return set_lum(set_sat(b.rgb, sat(s.rgb)), lum(b.rgb));
+    return set_lum(set_sat(b, sat(s)), lum(b));
 }
 
 // RGB Blending Modes //////////////////////////////////////////////////////////
@@ -142,7 +128,9 @@ fn multiply(b: vec3f, s: vec3f) -> vec3f {
 }
 
 fn divide(b: vec3f, s: vec3f) -> vec3f {
-    return b / s;
+    // s == 0: white unless the backdrop is black (avoids 0/0).
+    let q = b / max(s, vec3(1.0e-6));
+    return select(min(q, vec3(1.0)), vec3(0.0), b <= vec3(0.0));
 }
 
 fn screen(b: vec3f, s: vec3f) -> vec3f {
@@ -150,14 +138,14 @@ fn screen(b: vec3f, s: vec3f) -> vec3f {
 }
 
 fn add(b: vec3f, s: vec3f) -> vec3f {
-    return s + b;
+    return min(s + b, vec3(1.0));
 }
 
 fn hard_light(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
+    return select(
         screen(b, 2.0 * s - 1.0),
-        multiply(b, s * 2.0),
-        step(s, vec3(0.5))
+        multiply(b, 2.0 * s),
+        s <= vec3(0.5)
     );
 }
 
@@ -178,7 +166,7 @@ fn difference(b: vec3f, s: vec3f) -> vec3f {
 }
 
 fn subtract(b: vec3f, s: vec3f) -> vec3f {
-    return b - s;
+    return max(b - s, vec3(0.0));
 }
 
 fn linear_burn(b: vec3f, s: vec3f) -> vec3f {
@@ -190,11 +178,9 @@ fn linear_dodge(b: vec3f, s: vec3f) -> vec3f {
 }
 
 fn linear_light(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
-        linear_dodge(b, 2.0 * (s - 0.5)),
-        linear_burn(b, 2.0 * s),
-        step(s, vec3(0.5))
-    );
+    // linear_burn(b, 2s) for s <= 0.5, linear_dodge(b, 2s - 1) otherwise;
+    // both arms reduce to the same expression.
+    return saturate(b + 2.0 * s - 1.0);
 }
 
 fn exclusion(b: vec3f, s: vec3f) -> vec3f {
@@ -202,50 +188,43 @@ fn exclusion(b: vec3f, s: vec3f) -> vec3f {
 }
 
 fn color_dodge(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
-        vec3(1.0),
-        min(vec3(1.0), b / (1.0 - s)),
-        step(s, vec3(1.0))
-    );
+    // PDF: 0 if b == 0, 1 if s >= 1, else min(1, b / (1 - s)).
+    let r = select(min(vec3(1.0), b / (1.0 - s)), vec3(1.0), s >= vec3(1.0));
+    return select(r, vec3(0.0), b <= vec3(0.0));
 }
 
 fn color_burn(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
-        1.0 - min(vec3(1.0), (1.0 - b) / s),
-        vec3(0.0),
-        step(s, vec3(0.0))
-    );
+    // PDF: 1 if b == 1, 0 if s <= 0, else 1 - min(1, (1 - b) / s).
+    let r = select(1.0 - min(vec3(1.0), (1.0 - b) / s), vec3(0.0), s <= vec3(0.0));
+    return select(r, vec3(1.0), b >= vec3(1.0));
 }
 
 fn soft_light(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
+    // Photoshop variant (sqrt for s > 0.5) rather than the W3C polynomial.
+    return select(
         sqrt(b) * (2.0 * s - 1.0) + 2.0 * b * (1.0 - s),
         2.0 * b * s + b * b * (1.0 - 2.0 * s),
-        step(s, vec3(0.5))
+        s <= vec3(0.5)
     );
 }
 
 fn vivid_light(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
-        color_dodge(b, 2.0 * (s - 0.5)),
+    return select(
+        color_dodge(b, 2.0 * s - 1.0),
         color_burn(b, 2.0 * s),
-        step(s, vec3(0.5))
+        s <= vec3(0.5)
     );
 }
 
 fn hard_mix(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
-        vec3(1.0),
-        vec3(0.0),
-        step(vivid_light(b, s), vec3(0.5))
-    );
+    return select(vec3(0.0), vec3(1.0), b + s >= vec3(1.0));
 }
 
 fn pin_light(b: vec3f, s: vec3f) -> vec3f {
-    return mix(
-        lighten(b, 2.0 * (s - 0.5)),
+    return select(
+        lighten(b, 2.0 * s - 1.0),
         darken(b, 2.0 * s),
-        step(s, vec3(0.5))
+        s <= vec3(0.5)
     );
 }
 
@@ -377,6 +356,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
         // Premultiplied source with layer opacity applied.
         let src = fg * layer.opacity;
+        if (src.a == 0.0) {
+            // Fully masked or clipped out at this pixel.
+            continue;
+        }
 
         if (layer.blend == 0u) {
             // Normal: plain premultiplied "over".
@@ -384,7 +367,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
             continue;
         }
 
-        // Separable blend (PDF spec) in premultiplied form:
+        // General blend (PDF spec) in premultiplied form:
         //   Cs'(1 - ab) + Cb'(1 - as) + as * ab * B(cb, cs)
         let mixed = saturate(blend_rgb(layer.blend, unpremultiply(dst), unpremultiply(fg)));
         dst = saturate(vec4(
