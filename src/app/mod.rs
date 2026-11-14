@@ -2,6 +2,7 @@ mod blend;
 pub mod compositor;
 pub mod instance;
 
+use crate::platform::{self, FileSource};
 use compositor::CompositorApp;
 use eframe::egui_wgpu::wgpu;
 use egui_tiles::TileId;
@@ -19,55 +20,6 @@ use std::{
     sync::{Arc, atomic::AtomicUsize, mpsc::Sender},
     time::Duration,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use std::{fs::OpenOptions, path::PathBuf};
-
-/// Where a file to load comes from.
-pub enum FileSource {
-    /// A file on disk, memory-mapped while it decodes.
-    #[cfg(not(target_arch = "wasm32"))]
-    Path(PathBuf),
-    /// File contents already in memory, such as from a browser file picker.
-    /// Native frontends currently always have a path.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    Bytes(Arc<[u8]>),
-}
-
-/// The contents of an opened [`FileSource`].
-enum FileBytes {
-    #[cfg(not(target_arch = "wasm32"))]
-    Mapped(memmap2::Mmap),
-    Owned(Arc<[u8]>),
-}
-
-impl std::ops::Deref for FileBytes {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            FileBytes::Mapped(mapping) => mapping,
-            FileBytes::Owned(bytes) => bytes,
-        }
-    }
-}
-
-impl FileSource {
-    fn open(self) -> Result<FileBytes, SilicaError> {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            FileSource::Path(path) => {
-                let file = OpenOptions::new().read(true).write(false).open(path)?;
-                // SAFETY: the mapping is only read. Another process modifying
-                // the file while it decodes could produce garbage tiles, but
-                // the decoder bounds-checks everything it reads.
-                let mapping = unsafe { memmap2::Mmap::map(&file)? };
-                Ok(FileBytes::Mapped(mapping))
-            }
-            FileSource::Bytes(bytes) => Ok(FileBytes::Owned(bytes)),
-        }
-    }
-}
 
 pub type LoadResult = Result<(ProcreateFile, ProcreateFileAtlas), SilicaError>;
 
@@ -81,6 +33,8 @@ pub enum AppEvent {
         source: FileSource,
         tabs: Option<TileId>,
     },
+    /// A file was dropped onto the window and needs reading.
+    FileDropped(egui::DroppedFileHandle),
     /// A file finished decoding off the UI thread.
     FileDecoded {
         result: LoadResult,
@@ -112,6 +66,9 @@ impl std::fmt::Debug for AppEvent {
             AppEvent::RemoveInstance(arg0) => f.debug_tuple("RemoveInstance").field(arg0).finish(),
             AppEvent::Toast(_) => f.debug_tuple("Toast").field(&"...").finish(),
             AppEvent::LoadFile { .. } => f.debug_tuple("LoadFile").field(&"...").finish(),
+            AppEvent::FileDropped(file) => {
+                f.debug_tuple("FileDropped").field(&file.path()).finish()
+            }
             AppEvent::FileDecoded { .. } => f.debug_tuple("FileDecoded").field(&"...").finish(),
             AppEvent::LoadDialog(_) => f.debug_tuple("LoadDialog").field(&"...").finish(),
             AppEvent::SaveDialog(_) => f.debug_tuple("SaveDialog").field(&"...").finish(),
@@ -157,7 +114,7 @@ impl App {
             let bytes = source.open()?;
             let (decoder, atlas) = ProcreateFile::prepare(&bytes, &device)?;
 
-            if !Self::decode_on_workers() {
+            if !platform::decode_on_workers() {
                 return Self::decode_inline(decoder, &bytes, atlas, &queue);
             }
 
@@ -184,14 +141,6 @@ impl App {
             let file = done_rx.await.expect("decoder dropped without a result")?;
             Ok((file, atlas))
         }
-    }
-
-    /// Whether the rayon pool can run decoding in the background.
-    fn decode_on_workers() -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        return true;
-        #[cfg(target_arch = "wasm32")]
-        return crate::web::threads_enabled();
     }
 
     /// Decode on the current thread, for wasm builds without a thread pool.
@@ -319,7 +268,6 @@ impl App {
         id
     }
 
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     /// Export the texture to the given path.
     pub async fn export(
         texture: &wgpu::Texture,

@@ -3,8 +3,9 @@ pub mod prefs;
 
 use crate::app::compositor::CompositorApp;
 use crate::app::instance::InstanceKey;
-use crate::app::{App, AppEvent, FileSource};
+use crate::app::{App, AppEvent};
 use crate::gui::{ViewOptions, ViewerGui};
+use crate::platform::{self, FileSource};
 use crate::window::prefs::PersistedPreferences;
 use dialog::Dialog;
 use eframe::wgpu;
@@ -87,15 +88,10 @@ impl AppInstance {
     pub fn handle_user_event(
         &mut self,
         event: AppEvent,
-        rt: &super::UnifiedRuntime,
+        rt: &platform::Runtime,
         ctx: &egui::Context,
         frame: &mut eframe::Frame,
     ) {
-        #[cfg(target_arch = "wasm32")]
-        // rt is unused on wasm, so we bind it to _ to avoid a warning.
-        // On native, we use rt to spawn blocking tasks for file loading and saving.
-        let _ = rt;
-
         match event {
             AppEvent::RemoveInstance(idx) => {
                 self.viewer.instances.remove(&idx);
@@ -211,6 +207,18 @@ impl AppInstance {
                     ctx.request_repaint();
                 });
             }
+            AppEvent::FileDropped(file) => {
+                let event_sender = self.event_sender.clone();
+                rt.spawn(async move {
+                    let event = match platform::read_dropped_file(file).await {
+                        Ok(source) => AppEvent::LoadFile { source, tabs: None },
+                        Err(err) => AppEvent::Toast(egui_notify::Toast::error(format!(
+                            "Failed to read dropped file. Reason: {err}"
+                        ))),
+                    };
+                    event_sender.send(event).ok();
+                });
+            }
             AppEvent::FileDecoded { result, tabs } => match result {
                 Err(err) => {
                     self.toasts
@@ -249,7 +257,7 @@ impl AppInstance {
             }
             #[cfg(target_arch = "wasm32")]
             AppEvent::LoadDemoFile => {
-                use crate::web::fetch_demo_file;
+                use crate::platform::fetch_demo_file;
                 let event_sender = self.event_sender.clone();
                 rt.spawn(async move {
                     match fetch_demo_file().await {

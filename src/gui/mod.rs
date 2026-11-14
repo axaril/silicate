@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, mpsc::Sender};
 
 use crate::app::{
-    App, AppEvent, FileSource,
+    App, AppEvent,
     instance::{Instance, InstanceKey},
 };
 
@@ -504,35 +504,11 @@ impl ViewerGui {
                 self.layout_view(ui);
 
                 ui.input(|i| {
-                    i.raw.dropped_files.iter().for_each(|file| {
-                        cfg_select! {
-                            not(target_arch = "wasm32") => {
-                                self.event_sender
-                                    .send(AppEvent::LoadFile {
-                                        source: FileSource::Path(file.path().to_path_buf()),
-                                        tabs: None,
-                                    })
-                                    .ok();
-                            }
-                            target_arch = "wasm32" => {
-                                // Browsers can only read dropped files asynchronously.
-                                let file = file.clone();
-                                let event_sender = self.event_sender.clone();
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    let event = match file.bytes_async().await {
-                                        Ok(bytes) => AppEvent::LoadFile {
-                                            source: FileSource::Bytes(Arc::from(bytes)),
-                                            tabs: None,
-                                        },
-                                        Err(err) => AppEvent::Toast(egui_notify::Toast::error(
-                                            format!("Failed to read dropped file. Reason: {err}"),
-                                        )),
-                                    };
-                                    event_sender.send(event).ok();
-                                });
-                            }
-                        }
-                    });
+                    for file in &i.raw.dropped_files {
+                        self.event_sender
+                            .send(AppEvent::FileDropped(file.clone()))
+                            .ok();
+                    }
                 })
             });
     }

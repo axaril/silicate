@@ -1,9 +1,84 @@
+use super::ExportedImage;
+use silica_gpu::error::SilicaError;
+use std::sync::Arc;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::js_sys::ArrayBuffer;
 use web_sys::js_sys::wasm_bindgen::JsCast as _;
 use web_sys::js_sys::wasm_bindgen::closure::Closure;
 use web_sys::js_sys::{self, wasm_bindgen::JsValue};
 use web_sys::{Request, RequestInit, RequestMode, Response};
+
+/// Spawns async tasks on the browser's event loop.
+pub struct Runtime;
+
+impl Runtime {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = ()> + 'static,
+    {
+        wasm_bindgen_futures::spawn_local(future);
+    }
+}
+
+/// Where a file to load comes from.
+pub enum FileSource {
+    /// File contents already in memory, such as from the file picker.
+    Bytes(Arc<[u8]>),
+}
+
+/// The contents of an opened [`FileSource`].
+pub type FileBytes = Arc<[u8]>;
+
+impl FileSource {
+    pub fn open(self) -> Result<FileBytes, SilicaError> {
+        match self {
+            FileSource::Bytes(bytes) => Ok(bytes),
+        }
+    }
+}
+
+/// Whether the rayon pool can run decoding in the background.
+pub fn decode_on_workers() -> bool {
+    threads_enabled()
+}
+
+/// Turn a file dropped onto the page into a [`FileSource`].
+///
+/// Browsers can only read dropped files asynchronously.
+pub async fn read_dropped_file(file: egui::DroppedFileHandle) -> Result<FileSource, String> {
+    let bytes = file.bytes_async().await.map_err(|err| err.to_string())?;
+    Ok(FileSource::Bytes(Arc::from(bytes)))
+}
+
+/// Exported images are offered as a browser download.
+pub struct SaveTarget;
+
+/// Browsers choose the download location themselves, so this never cancels.
+pub async fn pick_save_target() -> Option<SaveTarget> {
+    Some(SaveTarget)
+}
+
+impl SaveTarget {
+    /// A name for the target, for messages to the user.
+    pub fn name(&self) -> String {
+        "image.png".to_owned()
+    }
+
+    /// Encode the image as PNG and download it.
+    pub async fn save(self, image: ExportedImage) -> Result<(), String> {
+        let mut writer = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut writer, image::ImageFormat::Png)
+            .map_err(|err| err.to_string())?;
+        save_blob_as_png(writer.get_ref(), &self.name())
+            .await
+            .map_err(|err| format!("{err:?}"))
+    }
+}
 
 async fn fetch_blob(resource_name: &str) -> Result<Vec<u8>, JsValue> {
     let opts = RequestInit::new();
@@ -30,7 +105,7 @@ async fn fetch_blob(resource_name: &str) -> Result<Vec<u8>, JsValue> {
     Ok(body)
 }
 
-pub async fn save_blob_as_png(blob: &[u8]) -> Result<(), JsValue> {
+async fn save_blob_as_png(blob: &[u8], file_name: &str) -> Result<(), JsValue> {
     let byte_array = js_sys::Uint8Array::from(blob);
     log::debug!(
         "Created Uint8Array from blob, length: {}",
@@ -59,7 +134,7 @@ pub async fn save_blob_as_png(blob: &[u8]) -> Result<(), JsValue> {
             .create_element("a")?
             .dyn_into::<web_sys::HtmlAnchorElement>()?;
         link.set_href(&url);
-        link.set_download("image.png");
+        link.set_download(file_name);
         link.set_inner_text("Click here to download the file");
         link
     };
@@ -112,14 +187,23 @@ const PICKER_HTML: &str = r#"
 </div>
 "#;
 
+/// Ask the user for a file to open. Returns `Ok(None)` if they cancel.
+pub async fn pick_file() -> Result<Option<FileSource>, String> {
+    match pick_file_bytes().await {
+        Ok(bytes) => Ok(bytes.map(|bytes| FileSource::Bytes(Arc::from(bytes)))),
+        Err(err) => Err(format!("{err:?}")),
+    }
+}
+
 /// Ask the user for a file and read its contents.
 ///
 /// Returns `Ok(None)` if the user cancels. Browsers only open the native
 /// picker from inside a tap or click handler, but egui handles input a frame
 /// later. Desktop browsers allow that delay; iOS Safari ignores the request.
 /// So this shows a popup whose button *is* the file input, which works on
-/// every browser at the cost of one extra tap.
-pub async fn pick_file() -> Result<Option<Vec<u8>>, JsValue> {
+/// every browser at the cost of one extra tap. (rfd's web picker has the same
+/// problem, which is why it isn't used here.)
+async fn pick_file_bytes() -> Result<Option<Vec<u8>>, JsValue> {
     let window = web_sys::window().expect("no global `window` exists");
     let document = window.document().expect("no document on window");
     let body = document.body().expect("document should have a body");

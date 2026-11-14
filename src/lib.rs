@@ -6,10 +6,9 @@ mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-#[cfg(target_arch = "wasm32")]
-mod web;
+mod platform;
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-pub use web::init_thread_pool;
+pub use platform::init_thread_pool;
 
 use app::AppEvent;
 use std::sync::mpsc::{Receiver, Sender};
@@ -18,48 +17,8 @@ use window::AppInstance;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-pub struct UnifiedRuntime {
-    // We use tokio on native and wasm_bindgen_futures on wasm
-    #[cfg(not(target_arch = "wasm32"))]
-    pub rt: tokio::runtime::Runtime,
-}
-
-impl UnifiedRuntime {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn new() -> Self {
-        Self {
-            rt: tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime creation successful"),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn spawn<F>(&self, future: F)
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        self.rt.spawn(future);
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn spawn<F>(&self, future: F)
-    where
-        F: Future<Output = ()> + 'static,
-    {
-        wasm_bindgen_futures::spawn_local(future);
-    }
-}
-
 pub struct AppMultiplexer {
-    rt: UnifiedRuntime,
+    rt: platform::Runtime,
     #[cfg(not(target_arch = "wasm32"))]
     initial_files: Vec<PathBuf>,
     running: Option<AppInstance>,
@@ -71,7 +30,7 @@ impl AppMultiplexer {
     pub fn new() -> Self {
         let (event_sender, event_receiver) = std::sync::mpsc::channel();
         Self {
-            rt: UnifiedRuntime::new(),
+            rt: platform::Runtime::new(),
             #[cfg(not(target_arch = "wasm32"))]
             initial_files: Vec::new(),
             running: None,

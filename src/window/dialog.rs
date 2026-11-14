@@ -4,7 +4,8 @@ use egui_tiles::TileId;
 use silicate_compositor::buffer::BufferDimensions;
 use std::sync::mpsc::Sender;
 
-use crate::app::{AppEvent, FileSource};
+use crate::app::AppEvent;
+use crate::platform;
 
 pub struct Dialog {
     event_sender: Sender<AppEvent>,
@@ -20,121 +21,49 @@ impl Dialog {
     }
 
     pub async fn load_dialog(self, tabs: Option<TileId>) {
-        cfg_select! {
-            not(target_arch = "wasm32") => {
-                let dialog = rfd::AsyncFileDialog::new()
-                    .add_filter("All Files", &["*"])
-                    .add_filter("Procreate Files", &["procreate"])
-                    .pick_file();
-
-                let Some(handle) = dialog.await else {
-                    self.send_toast(Toast::info("Load cancelled."));
-                    return;
-                };
-
-                self.event_sender
-                    .send(AppEvent::LoadFile {
-                        source: FileSource::Path(handle.path().to_path_buf()),
-                        tabs,
-                    })
-                    .unwrap();
+        let source = match platform::pick_file().await {
+            Ok(Some(source)) => source,
+            Ok(None) => {
+                self.send_toast(Toast::info("Load cancelled."));
+                return;
             }
-            target_arch = "wasm32" => {
-                use std::sync::Arc;
-
-                // rfd's web picker can silently fail to open on iOS; see `pick_file`.
-                let data = match crate::web::pick_file().await {
-                    Ok(Some(data)) => data,
-                    Ok(None) => {
-                        self.send_toast(Toast::info("Load cancelled."));
-                        return;
-                    }
-                    Err(err) => {
-                        log::error!("Failed to read file: {err:?}");
-                        self.send_toast(Toast::error("Failed to read file."));
-                        return;
-                    }
-                };
-
-                log::info!("File read complete, loading file...");
-                self.event_sender
-                    .send(AppEvent::LoadFile {
-                        source: FileSource::Bytes(Arc::from(data)),
-                        tabs,
-                    })
-                    .unwrap();
+            Err(err) => {
+                log::error!("Failed to read file: {err}");
+                self.send_toast(Toast::error("Failed to read file."));
+                return;
             }
-        }
+        };
+
+        self.event_sender
+            .send(AppEvent::LoadFile { source, tabs })
+            .unwrap();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn save_dialog(
         self,
         device: wgpu::Device,
         queue: wgpu::Queue,
         copied_texture: wgpu::Texture,
     ) {
-        let dialog = rfd::AsyncFileDialog::new()
-            .add_filter("png", image::ImageFormat::Png.extensions_str())
-            .add_filter("jpeg", image::ImageFormat::Jpeg.extensions_str())
-            .add_filter("tga", image::ImageFormat::Tga.extensions_str())
-            .add_filter("tiff", image::ImageFormat::Tiff.extensions_str())
-            .add_filter("webp", image::ImageFormat::WebP.extensions_str())
-            .add_filter("bmp", image::ImageFormat::Bmp.extensions_str())
-            .save_file();
-
-        let Some(handle) = dialog.await else {
+        let Some(target) = platform::pick_save_target().await else {
             self.send_toast(Toast::info("Export cancelled."));
             return;
         };
+        let name = target.name();
 
         let dim = BufferDimensions::from_extent(copied_texture.size());
-        let path = handle.path().to_path_buf();
+        let result = match crate::app::App::export(&copied_texture, &device, &queue, dim).await {
+            Ok(image) => target.save(image).await,
+            Err(err) => Err(err.to_string()),
+        };
 
-        let image = crate::app::App::export(&copied_texture, &device, &queue, dim)
-            .await
-            .unwrap();
-
-        log::info!("Saving the file to {}", path.display());
-        let save_result = tokio::task::spawn_blocking(move || image.save(path))
-            .await
-            .unwrap();
-
-        if let Err(err) = save_result {
-            self.send_toast(Toast::error(format!(
-                "File {} failed to export. Reason: {err}.",
-                handle.file_name()
-            )));
-        } else {
-            self.send_toast(Toast::success(format!(
-                "File {} successfully exported.",
-                handle.file_name()
-            )));
+        match result {
+            Ok(()) => self.send_toast(Toast::success(format!(
+                "File {name} successfully exported."
+            ))),
+            Err(err) => self.send_toast(Toast::error(format!(
+                "File {name} failed to export. Reason: {err}."
+            ))),
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub async fn save_dialog(
-        self,
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        copied_texture: wgpu::Texture,
-    ) {
-        let dim = BufferDimensions::from_extent(copied_texture.size());
-
-        let image = crate::app::App::export(&copied_texture, &device, &queue, dim)
-            .await
-            .unwrap();
-
-        let output_format = image::ImageFormat::Png;
-        let mut writer = std::io::Cursor::new(Vec::new());
-        // image.save(path)
-        image
-            .write_to(&mut writer, output_format)
-            .expect("Save failure");
-
-        crate::web::save_blob_as_png(writer.into_inner().as_slice())
-            .await
-            .unwrap();
     }
 }
